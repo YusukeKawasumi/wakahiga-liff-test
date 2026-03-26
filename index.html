@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>初回登録</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      margin-top: 4px;
+      margin-bottom: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 6px;
+      background: #06c755;
+      color: white;
+      font-size: 16px;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h2>初回登録</h2>
+
+  <p><strong>userId:</strong> <span id="userId">Loading...</span></p>
+
+  <label for="name">氏名</label>
+  <input type="text" id="name" />
+
+  <label for="address">住所</label>
+  <input type="text" id="address" placeholder="例: 1-2-3 / 1-2-3-456" />
+
+  <label for="phone">連絡先</label>
+  <input type="text" id="phone" />
+
+  <label>
+    <input type="checkbox" id="agree" />
+    規約に同意する
+  </label>
+
+  <br><br>
+
+  <button id="submitBtn">登録</button>
+
+  <hr>
+
+  <h3>登録内容（テスト表示）</h3>
+  <pre id="output"></pre>
+
+  <script>
+    let currentUserId = "";
+
+    async function main() {
+      try {
+        await liff.init({ liffId: "2009602733-WpHAvc4D" });
+
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        document.getElementById("userId").textContent = currentUserId;
+      } catch (error) {
+        document.getElementById("userId").textContent =
+          "エラー: " + (error.message || error);
+      }
+    }
+
+    document.getElementById("submitBtn").addEventListener("click", function () {
+      const name = document.getElementById("name").value.trim();
+      const address = document.getElementById("address").value.trim();
+      const phone = document.getElementById("phone").value.trim();
+      const agree = document.getElementById("agree").checked;
+
+      if (!name || !address || !phone) {
+        alert("すべて入力してください");
+        return;
+      }
+
+      if (!agree) {
+        alert("規約に同意してください");
+        return;
+      }
+
+      const data = {
+        userId: currentUserId,
+        name: name,
+        address: address,
+        phone: phone,
+        agree: agree,
+        timestamp: new Date().toISOString()
+      };
+
+      document.getElementById("output").textContent =
+        JSON.stringify(data, null, 2);
+    });
+
+    main();
+  </script>
+</body>
+</html>
