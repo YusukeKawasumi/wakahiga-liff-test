@@ -38,10 +38,14 @@
 <body>
   <h2>初回登録</h2>
 
+  <p><strong>状態:</strong> <span id="status">開始前</span></p>
   <p><strong>userId:</strong> <span id="userId">Loading...</span></p>
 
-  <label for="name">氏名</label>
-  <input type="text" id="name" />
+  <label for="lastName">姓</label>
+  <input type="text" id="lastName" />
+
+  <label for="firstName">名</label>
+  <input type="text" id="firstName" />
 
   <label for="address">住所</label>
   <input type="text" id="address" placeholder="例: 1-2-3 / 1-2-3-456" />
@@ -60,80 +64,120 @@
 
   <hr>
 
-  <h3>登録内容（テスト表示）</h3>
+  <h3>デバッグ / 保存結果</h3>
   <pre id="output"></pre>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
-import {
-  getFirestore,
-  doc,
-  setDoc
-} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+    import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
-  authDomain: "wakahiga-test.firebaseapp.com",
-  projectId: "wakahiga-test",
-  storageBucket: "wakahiga-test.firebasestorage.app",
-  messagingSenderId: "369904902476",
-  appId: "1:369904902476:web:3660b07939c9fe2347afe9"
-};
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-    
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const outputEl = document.getElementById("output");
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
     let currentUserId = "";
+    let db = null;
 
-    async function main() {
+    try {
+      setStatus("Firebase初期化開始");
+      const app = initializeApp(firebaseConfig);
+      db = getFirestore(app);
+      setStatus("Firebase初期化完了");
+    } catch (e) {
+      setStatus("Firebase初期化失敗");
+      outputEl.textContent += `[FIREBASE INIT ERROR] ${e.message || e}\n`;
+    }
+
+    async function initLiff() {
       try {
+        setStatus("LIFF初期化開始");
         await liff.init({ liffId: "2009602733-WpHAvc4D" });
+        setStatus("LIFF初期化完了");
 
         if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
           liff.login();
           return;
         }
 
         const profile = await liff.getProfile();
         currentUserId = profile.userId;
-        document.getElementById("userId").textContent = currentUserId;
-      } catch (error) {
-        document.getElementById("userId").textContent =
-          "エラー: " + (error.message || error);
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+      } catch (e) {
+        userIdEl.textContent = "エラー";
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
       }
     }
 
-    document.getElementById("submitBtn").addEventListener("click", function () {
-      const name = document.getElementById("name").value.trim();
-      const address = document.getElementById("address").value.trim();
-      const phone = document.getElementById("phone").value.trim();
-      const agree = document.getElementById("agree").checked;
+    async function saveUser() {
+      try {
+        setStatus("登録処理開始");
 
-      if (!name || !address || !phone) {
-        alert("すべて入力してください");
-        return;
+        const lastName = document.getElementById("lastName").value.trim();
+        const firstName = document.getElementById("firstName").value.trim();
+        const address = document.getElementById("address").value.trim();
+        let phone = document.getElementById("phone").value.trim();
+        const agree = document.getElementById("agree").checked;
+
+        phone = phone.replace(/[^0-9]/g, "");
+
+        if (!currentUserId) {
+          throw new Error("userId が取得できていません");
+        }
+        if (!lastName || !firstName || !address || !phone) {
+          throw new Error("すべて入力してください");
+        }
+        if (!agree) {
+          throw new Error("規約に同意してください");
+        }
+        if (!db) {
+          throw new Error("Firestore が初期化されていません");
+        }
+
+        const data = {
+          userId: currentUserId,
+          lastName,
+          firstName,
+          address,
+          phone,
+          agree,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        outputEl.textContent += `[SAVE DATA]\n${JSON.stringify(data, null, 2)}\n`;
+
+        await setDoc(doc(db, "users", currentUserId), data, { merge: true });
+
+        setStatus("Firestore保存完了");
+        outputEl.textContent += `[SUCCESS] Firestore に保存しました\n`;
+        alert("登録しました");
+      } catch (e) {
+        setStatus("保存エラー");
+        outputEl.textContent += `[SAVE ERROR] ${e.message || e}\n`;
+        alert(e.message || e);
       }
+    }
 
-      if (!agree) {
-        alert("規約に同意してください");
-        return;
-      }
+    document.getElementById("submitBtn").addEventListener("click", saveUser);
 
-      const data = {
-        userId: currentUserId,
-        name: name,
-        address: address,
-        phone: phone,
-        agree: agree,
-        timestamp: new Date().toISOString()
-      };
-      await setDoc(doc(db, "users", currentUserId), data);
-
-      document.getElementById("output").textContent =
-        JSON.stringify(data, null, 2);
-    });
-
-    main();
+    initLiff();
   </script>
 </body>
 </html>
