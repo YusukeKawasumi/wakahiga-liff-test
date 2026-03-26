@@ -33,6 +33,13 @@
       white-space: pre-wrap;
       word-break: break-all;
     }
+    .success {
+      margin-top: 16px;
+      padding: 12px;
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+      border-radius: 6px;
+    }
   </style>
 </head>
 <body>
@@ -62,6 +69,8 @@
 
   <button id="submitBtn">登録</button>
 
+  <div id="successMessage" class="success" style="display:none;"></div>
+
   <hr>
 
   <h3>デバッグ / 保存結果</h3>
@@ -70,7 +79,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
     import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
-    
+
     const firebaseConfig = {
       apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
       authDomain: "wakahiga-test.firebaseapp.com",
@@ -79,23 +88,21 @@
       messagingSenderId: "369904902476",
       appId: "1:369904902476:web:3660b07939c9fe2347afe9"
     };
-    import { getDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
-
-const docRef = doc(db, "users", currentUserId);
-const docSnap = await getDoc(docRef);
-
-if (docSnap.exists()) {
-  alert("すでに登録されています");
-  return;
-}
 
     const statusEl = document.getElementById("status");
     const userIdEl = document.getElementById("userId");
     const outputEl = document.getElementById("output");
+    const successEl = document.getElementById("successMessage");
+    const submitBtn = document.getElementById("submitBtn");
 
     function setStatus(text) {
       statusEl.textContent = text;
       outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showSuccessMessage(text) {
+      successEl.textContent = text;
+      successEl.style.display = "block";
     }
 
     let currentUserId = "";
@@ -116,6 +123,8 @@ if (docSnap.exists()) {
         setStatus("LIFF初期化開始");
         await liff.init({ liffId: "2009602733-WpHAvc4D" });
         setStatus("LIFF初期化完了");
+
+        outputEl.textContent += `[isInClient] ${liff.isInClient()}\n`;
 
         if (!liff.isLoggedIn()) {
           setStatus("未ログインのためloginへ");
@@ -176,7 +185,27 @@ if (docSnap.exists()) {
 
         setStatus("Firestore保存完了");
         outputEl.textContent += `[SUCCESS] Firestore に保存しました\n`;
-        alert("登録しました");
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "登録完了";
+
+        if (liff.isInClient()) {
+          setStatus("LINEクライアント内のため画面を閉じます");
+          showSuccessMessage("登録完了しました。画面を閉じます。");
+
+          setTimeout(() => {
+            try {
+              liff.closeWindow();
+            } catch (e) {
+              outputEl.textContent += `[CLOSE ERROR] ${e.message || e}\n`;
+              showSuccessMessage("登録完了しました。画面を閉じてください。");
+            }
+          }, 800);
+        } else {
+          setStatus("外部ブラウザのため画面を閉じられません");
+          showSuccessMessage("登録完了しました。画面を閉じてください。");
+        }
+
       } catch (e) {
         setStatus("保存エラー");
         outputEl.textContent += `[SAVE ERROR] ${e.message || e}\n`;
@@ -184,12 +213,9 @@ if (docSnap.exists()) {
       }
     }
 
-    document.getElementById("submitBtn").addEventListener("click", saveUser);
+    submitBtn.addEventListener("click", saveUser);
 
     initLiff();
-    
-    liff.closeWindow();
-    
   </script>
 </body>
 </html>
