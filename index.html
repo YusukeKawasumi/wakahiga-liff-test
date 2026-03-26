@@ -63,7 +63,26 @@
   <h3>登録内容（テスト表示）</h3>
   <pre id="output"></pre>
 
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+import {
+  getFirestore,
+  doc,
+  setDoc
+} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "あなたの値",
+  authDomain: "あなたの値",
+  projectId: "wakahiga-test",
+  storageBucket: "あなたの値",
+  messagingSenderId: "あなたの値",
+  appId: "あなたの値"
+}
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+    
     let currentUserId = "";
 
     async function main() {
@@ -108,6 +127,7 @@
         agree: agree,
         timestamp: new Date().toISOString()
       };
+      await setDoc(doc(db, "users", currentUserId), data);
 
       document.getElementById("output").textContent =
         JSON.stringify(data, null, 2);
