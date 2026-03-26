@@ -70,7 +70,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
     import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
-
+    
     const firebaseConfig = {
       apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
       authDomain: "wakahiga-test.firebaseapp.com",
@@ -79,6 +79,15 @@
       messagingSenderId: "369904902476",
       appId: "1:369904902476:web:3660b07939c9fe2347afe9"
     };
+    import { getDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+const docRef = doc(db, "users", currentUserId);
+const docSnap = await getDoc(docRef);
+
+if (docSnap.exists()) {
+  alert("すでに登録されています");
+  return;
+}
 
     const statusEl = document.getElementById("status");
     const userIdEl = document.getElementById("userId");
@@ -178,6 +187,9 @@
     document.getElementById("submitBtn").addEventListener("click", saveUser);
 
     initLiff();
+    
+    liff.closeWindow();
+    
   </script>
 </body>
 </html>
