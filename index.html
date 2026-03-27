@@ -14,208 +14,188 @@
     input[type="text"] {
       width: 100%;
       padding: 8px;
-      box-sizing: border-box;
-      margin-top: 4px;
       margin-bottom: 16px;
     }
     button {
       width: 100%;
       padding: 12px;
+      margin-top: 8px;
       border: none;
       border-radius: 6px;
+      font-size: 16px;
+    }
+    #submitBtn {
       background: #06c755;
       color: white;
-      font-size: 16px;
+    }
+    #cancelBtn {
+      background: #ccc;
+    }
+    .info {
+      padding: 10px;
+      background: #e8f5e9;
+      margin-bottom: 12px;
     }
     pre {
       background: #f4f4f4;
-      padding: 12px;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    .success {
-      margin-top: 16px;
-      padding: 12px;
-      background: #e8f5e9;
-      border: 1px solid #06c755;
-      border-radius: 6px;
+      padding: 10px;
     }
   </style>
 </head>
 <body>
-  <h2>初回登録</h2>
 
-  <p><strong>状態:</strong> <span id="status">開始前</span></p>
-  <p><strong>userId:</strong> <span id="userId">Loading...</span></p>
+<h2>初回登録</h2>
 
-  <label for="lastName">姓</label>
-  <input type="text" id="lastName" />
+<p><strong>userId:</strong> <span id="userId">Loading...</span></p>
 
-  <label for="firstName">名</label>
-  <input type="text" id="firstName" />
+<div id="existingMessage" class="info" style="display:none;"></div>
 
-  <label for="address">住所</label>
-  <input type="text" id="address" placeholder="例: 1-2-3 / 1-2-3-456" />
+<label>姓</label>
+<input type="text" id="lastName">
 
-  <label for="phone">連絡先</label>
-  <input type="text" id="phone" />
+<label>名</label>
+<input type="text" id="firstName">
 
-  <label>
-    <input type="checkbox" id="agree" />
-    規約に同意する
-  </label>
+<label>住所</label>
+<input type="text" id="address" placeholder="例: 1-2-3">
 
-  <br><br>
+<label>連絡先</label>
+<input type="text" id="phone">
 
-  <button id="submitBtn">登録</button>
+<label>
+  <input type="checkbox" id="agree"> 規約に同意する
+</label>
 
-  <div id="successMessage" class="success" style="display:none;"></div>
+<br><br>
 
-  <hr>
+<button id="submitBtn">登録する</button>
+<button id="cancelBtn">閉じる</button>
 
-  <h3>デバッグ / 保存結果</h3>
-  <pre id="output"></pre>
+<hr>
+<pre id="output"></pre>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
-    import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
-      authDomain: "wakahiga-test.firebaseapp.com",
-      projectId: "wakahiga-test",
-      storageBucket: "wakahiga-test.firebasestorage.app",
-      messagingSenderId: "369904902476",
-      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
-    };
+const firebaseConfig = {
+  apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+  authDomain: "wakahiga-test.firebaseapp.com",
+  projectId: "wakahiga-test",
+  storageBucket: "wakahiga-test.firebasestorage.app",
+  messagingSenderId: "369904902476",
+  appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+};
 
-    const statusEl = document.getElementById("status");
-    const userIdEl = document.getElementById("userId");
-    const outputEl = document.getElementById("output");
-    const successEl = document.getElementById("successMessage");
-    const submitBtn = document.getElementById("submitBtn");
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-    function setStatus(text) {
-      statusEl.textContent = text;
-      outputEl.textContent += `[STATUS] ${text}\n`;
-    }
+let currentUserId = "";
+let isExistingUser = false;
 
-    function showSuccessMessage(text) {
-      successEl.textContent = text;
-      successEl.style.display = "block";
-    }
+const outputEl = document.getElementById("output");
 
-    let currentUserId = "";
-    let db = null;
+function log(text) {
+  outputEl.textContent += text + "\n";
+}
 
-    try {
-      setStatus("Firebase初期化開始");
-      const app = initializeApp(firebaseConfig);
-      db = getFirestore(app);
-      setStatus("Firebase初期化完了");
-    } catch (e) {
-      setStatus("Firebase初期化失敗");
-      outputEl.textContent += `[FIREBASE INIT ERROR] ${e.message || e}\n`;
-    }
+async function initLiff() {
+  await liff.init({ liffId: "2009602733-WpHAvc4D" });
 
-    async function initLiff() {
-      try {
-        setStatus("LIFF初期化開始");
-        await liff.init({ liffId: "2009602733-WpHAvc4D" });
-        setStatus("LIFF初期化完了");
+  if (!liff.isLoggedIn()) {
+    liff.login();
+    return;
+  }
 
-        outputEl.textContent += `[isInClient] ${liff.isInClient()}\n`;
+  const profile = await liff.getProfile();
+  currentUserId = profile.userId;
+  document.getElementById("userId").textContent = currentUserId;
 
-        if (!liff.isLoggedIn()) {
-          setStatus("未ログインのためloginへ");
-          liff.login();
-          return;
-        }
+  await checkExistingUser();
+}
 
-        const profile = await liff.getProfile();
-        currentUserId = profile.userId;
-        userIdEl.textContent = currentUserId;
-        setStatus("userId取得完了");
-      } catch (e) {
-        userIdEl.textContent = "エラー";
-        setStatus("LIFFエラー");
-        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
-      }
-    }
+async function checkExistingUser() {
+  const ref = doc(db, "users", currentUserId);
+  const snap = await getDoc(ref);
 
-    async function saveUser() {
-      try {
-        setStatus("登録処理開始");
+  if (snap.exists()) {
+    isExistingUser = true;
+    const data = snap.data();
 
-        const lastName = document.getElementById("lastName").value.trim();
-        const firstName = document.getElementById("firstName").value.trim();
-        const address = document.getElementById("address").value.trim();
-        let phone = document.getElementById("phone").value.trim();
-        const agree = document.getElementById("agree").checked;
+    document.getElementById("lastName").value = data.lastName || "";
+    document.getElementById("firstName").value = data.firstName || "";
+    document.getElementById("address").value = data.address || "";
+    document.getElementById("phone").value = data.phone || "";
 
-        phone = phone.replace(/[^0-9]/g, "");
+    document.getElementById("existingMessage").style.display = "block";
+    document.getElementById("existingMessage").textContent =
+      "登録済みです。内容を変更して更新できます。";
 
-        if (!currentUserId) {
-          throw new Error("userId が取得できていません");
-        }
-        if (!lastName || !firstName || !address || !phone) {
-          throw new Error("すべて入力してください");
-        }
-        if (!agree) {
-          throw new Error("規約に同意してください");
-        }
-        if (!db) {
-          throw new Error("Firestore が初期化されていません");
-        }
+    document.getElementById("submitBtn").textContent = "更新する";
 
-        const data = {
-          userId: currentUserId,
-          lastName,
-          firstName,
-          address,
-          phone,
-          agree,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
+    log("既存ユーザー読み込み");
+  }
+}
 
-        outputEl.textContent += `[SAVE DATA]\n${JSON.stringify(data, null, 2)}\n`;
+async function saveUser() {
+  const lastName = document.getElementById("lastName").value.trim();
+  const firstName = document.getElementById("firstName").value.trim();
+  const address = document.getElementById("address").value.trim();
+  let phone = document.getElementById("phone").value.trim();
+  const agree = document.getElementById("agree").checked;
 
-        await setDoc(doc(db, "users", currentUserId), data, { merge: true });
+  phone = phone.replace(/[^0-9]/g, "");
 
-        setStatus("Firestore保存完了");
-        outputEl.textContent += `[SUCCESS] Firestore に保存しました\n`;
+  if (!lastName || !firstName || !address || !phone) {
+    alert("すべて入力してください");
+    return;
+  }
 
-        submitBtn.disabled = true;
-        submitBtn.textContent = "登録完了";
+  if (!agree) {
+    alert("規約に同意してください");
+    return;
+  }
 
-        if (liff.isInClient()) {
-          setStatus("LINEクライアント内のため画面を閉じます");
-          showSuccessMessage("登録完了しました。画面を閉じます。");
+  if (isExistingUser) {
+    const ok = confirm("登録済みです。上書き更新しますか？");
+    if (!ok) return;
+  }
 
-          setTimeout(() => {
-            try {
-              liff.closeWindow();
-            } catch (e) {
-              outputEl.textContent += `[CLOSE ERROR] ${e.message || e}\n`;
-              showSuccessMessage("登録完了しました。画面を閉じてください。");
-            }
-          }, 800);
-        } else {
-          setStatus("外部ブラウザのため画面を閉じられません");
-          showSuccessMessage("登録完了しました。画面を閉じてください。");
-        }
+  const data = {
+    userId: currentUserId,
+    lastName,
+    firstName,
+    address,
+    phone,
+    agree,
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  };
 
-      } catch (e) {
-        setStatus("保存エラー");
-        outputEl.textContent += `[SAVE ERROR] ${e.message || e}\n`;
-        alert(e.message || e);
-      }
-    }
+  await setDoc(doc(db, "users", currentUserId), data, { merge: true });
 
-    submitBtn.addEventListener("click", saveUser);
+  alert("保存しました");
 
-    initLiff();
-  </script>
+  if (liff.isInClient()) {
+    liff.closeWindow();
+  } else {
+    log("外部ブラウザのため閉じられません");
+  }
+}
+
+function closeApp() {
+  if (liff.isInClient()) {
+    liff.closeWindow();
+  } else {
+    alert("画面を閉じてください");
+  }
+}
+
+document.getElementById("submitBtn").addEventListener("click", saveUser);
+document.getElementById("cancelBtn").addEventListener("click", closeApp);
+
+initLiff();
+</script>
+
 </body>
 </html>
