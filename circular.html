@@ -1,3 +1,7 @@
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+<div id="status">初期化前</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
 import {
@@ -22,53 +26,74 @@ const db = getFirestore(app);
 
 let currentUserId = "";
 
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+
 async function init() {
-  await liff.init({ liffId: "2009623625-55OO77NK" });
+  try {
+    setStatus("LIFF初期化中...");
+    await liff.init({ liffId: "2009623625-55OO77NK" });
 
-  if (!liff.isLoggedIn()) {
-    liff.login();
-    return;
+    if (!liff.isLoggedIn()) {
+      setStatus("未ログインのためログインへ");
+      liff.login();
+      return;
+    }
+
+    setStatus("プロフィール取得中...");
+    const profile = await liff.getProfile();
+    currentUserId = profile.userId;
+
+    setStatus("ユーザー確認中...");
+    await checkUserAndShow();
+  } catch (e) {
+    setStatus("initエラー: " + (e.message || e));
   }
-
-  const profile = await liff.getProfile();
-  currentUserId = profile.userId;
-
-  await checkUserAndShow();
 }
 
 async function checkUserAndShow() {
-  const ref = doc(db, "users", currentUserId);
-  const snap = await getDoc(ref);
+  try {
+    const ref = doc(db, "users", currentUserId);
+    const snap = await getDoc(ref);
 
-  if (!snap.exists()) {
+    if (!snap.exists()) {
+      document.body.innerHTML = `
+        <h2>未登録です</h2>
+        <p>先に登録してください</p>
+        <button id="goRegisterBtn">登録ページへ</button>
+      `;
+
+      document.getElementById("goRegisterBtn").addEventListener("click", () => {
+        location.href = "index.html";
+      });
+
+      return;
+    }
+
+    const userData = snap.data();
+
+    setStatus("閲覧履歴保存中...");
+    await addDoc(collection(db, "viewLogs"), {
+      userId: currentUserId,
+      lastName: userData.lastName,
+      firstName: userData.firstName,
+      documentName: "回覧物1",
+      viewedAt: new Date().toISOString()
+    });
+
     document.body.innerHTML = `
-      <h2>未登録です</h2>
-      <p>先に登録してください</p>
-      <button onclick="location.href='index.html'">登録ページへ</button>
+      <iframe
+        src="https://yusukekawasumi.github.io/wakahiga-liff-test/sample.pdf"
+        style="width:100%; height:100vh; border:none;">
+      </iframe>
     `;
-    return;
+  } catch (e) {
+    document.body.innerHTML = `
+      <h2>エラーが発生しました</h2>
+      <pre>${e.message || e}</pre>
+    `;
   }
-
-  const userData = snap.data();
-
-  // 🔥 閲覧履歴を自動記録
-  await addDoc(collection(db, "viewLogs"), {
-    userId: currentUserId,
-    lastName: userData.lastName,
-    firstName: userData.firstName,
-    documentName: "回覧物1",
-    viewedAt: new Date().toISOString()
-  });
-
-  // 🔥 PDF表示
-  document.body.innerHTML = `
-    <iframe 
-      src="https://yusukekawasumi.github.io/wakahiga-liff-test/sample.pdf" 
-      width="100%" 
-      height="100%" 
-      style="border:none;">
-    </iframe>
-  `;
 }
 
 init();
