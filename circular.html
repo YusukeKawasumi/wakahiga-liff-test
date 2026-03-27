@@ -23,7 +23,7 @@ const db = getFirestore(app);
 let currentUserId = "";
 
 async function init() {
-  await liff.init({ liffId: "あなたのcircular用LIFF ID" });
+  await liff.init({ liffId: "2009623625-55OO77NK" });
 
   if (!liff.isLoggedIn()) {
     liff.login();
@@ -63,7 +63,7 @@ async function checkUserAndShow() {
   // 🔥 PDF表示
   document.body.innerHTML = `
     <iframe 
-      src="https://あなた.github.io/リポジトリ名/sample.pdf" 
+      src="https://yusukekawasumi.github.io/wakahiga-liff-test/sample.pdf" 
       width="100%" 
       height="100%" 
       style="border:none;">
