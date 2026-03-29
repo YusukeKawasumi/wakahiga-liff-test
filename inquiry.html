@@ -1,81 +1,290 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>お問い合わせ</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-</head>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
 
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .desc {
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 16px;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+
+    .radio-group label {
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    #submitBtn {
+      background: #06c755;
+      color: white;
+    }
+
+    #cancelBtn {
+      background: #ddd;
+      color: #222;
+    }
+
+    .info {
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 16px;
+      display: none;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
 <body>
   <h2>お問い合わせ</h2>
+  <p class="desc">一般のお問い合わせはこちらから送信してください。</p>
 
-  <p>種別</p>
-  <label><input type="radio" name="category" value="general"> 質問全般</label><br>
-  <label><input type="radio" name="category" value="event"> イベント関連</label><br>
-  <label><input type="radio" name="category" value="bug"> アプリ不具合</label><br>
-  <label><input type="radio" name="category" value="other"> その他</label><br>
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+  </div>
 
-  <p>内容</p>
-  <textarea id="message" rows="5" style="width:100%"></textarea>
+  <div class="section">
+    <strong>お問い合わせ種別</strong>
+    <div class="radio-group">
+      <label><input type="radio" name="category" value="general" data-label="質問全般"> 質問全般</label>
+      <label><input type="radio" name="category" value="event" data-label="イベント関連"> イベント関連</label>
+      <label><input type="radio" name="category" value="bug" data-label="アプリ不具合"> アプリ不具合</label>
+      <label><input type="radio" name="category" value="other" data-label="その他"> その他</label>
+    </div>
+  </div>
 
-  <br><br>
-  <button onclick="submitForm()">送信</button>
+  <div class="section">
+    <strong>内容</strong>
+    <textarea id="message" placeholder="お問い合わせ内容をご入力ください"></textarea>
+  </div>
+
+  <button id="submitBtn">送信する</button>
+  <button id="cancelBtn">閉じる</button>
+
+  <div id="successMessage" class="success"></div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
     import {
       getFirestore,
+      doc,
+      getDoc,
       collection,
       addDoc
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
-  authDomain: "wakahiga-test.firebaseapp.com",
-  projectId: "wakahiga-test",
-  storageBucket: "wakahiga-test.firebasestorage.app",
-  messagingSenderId: "369904902476",
-  appId: "1:369904902476:web:3660b07939c9fe2347afe9"
-};
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009637971-6jt5Dlnt";
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    let userId = "";
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const outputEl = document.getElementById("output");
+    const successEl = document.getElementById("successMessage");
+    const submitBtn = document.getElementById("submitBtn");
 
-    async function init() {
-      await liff.init({ liffId: "あなたのLIFF ID" });
+    let currentUserId = "";
+    let userData = null;
 
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return;
-      }
-
-      const profile = await liff.getProfile();
-      userId = profile.userId;
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
     }
 
-    window.submitForm = async function () {
-      const category = document.querySelector('input[name="category"]:checked');
-      const message = document.getElementById("message").value;
+    function showSuccess(text) {
+      successEl.textContent = text;
+      successEl.style.display = "block";
+    }
 
-      if (!category || !message) {
-        alert("すべて入力してください");
-        return;
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await loadUserInfo();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        userIdEl.textContent = "エラー";
+        displayNameEl.textContent = "取得失敗";
       }
+    }
 
-      await addDoc(collection(db, "inquiries"), {
-        userId: userId,
-        category: category.value,
-        message: message,
-        createdAt: new Date().toISOString()
-      });
+    async function loadUserInfo() {
+      try {
+        setStatus("ユーザー情報確認中");
 
-      alert("送信しました");
-      liff.closeWindow();
-    };
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
 
-    init();
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          setStatus("未登録ユーザー");
+          showSuccess("未登録です。先に登録ページで登録してください。");
+          submitBtn.disabled = true;
+          return;
+        }
+
+        userData = snap.data();
+        displayNameEl.textContent = `${userData.lastName || ""} ${userData.firstName || ""}`.trim();
+        setStatus("ユーザー情報取得完了");
+      } catch (e) {
+        setStatus("ユーザー情報取得エラー");
+        outputEl.textContent += `[USER LOAD ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    async function submitInquiry() {
+      try {
+        setStatus("送信処理開始");
+
+        if (!currentUserId) {
+          throw new Error("userId が取得できていません");
+        }
+
+        if (!userData) {
+          throw new Error("登録情報が見つかりません。先に登録してください");
+        }
+
+        const selected = document.querySelector('input[name="category"]:checked');
+        const message = document.getElementById("message").value.trim();
+
+        if (!selected) {
+          throw new Error("お問い合わせ種別を選択してください");
+        }
+
+        if (!message) {
+          throw new Error("内容を入力してください");
+        }
+
+        const category = selected.value;
+        const categoryLabel = selected.dataset.label;
+
+        const data = {
+          userId: currentUserId,
+          lastName: userData.lastName || "",
+          firstName: userData.firstName || "",
+          category,
+          categoryLabel,
+          message,
+          createdAt: new Date().toISOString(),
+          status: "new"
+        };
+
+        outputEl.textContent += `[SAVE DATA]\n${JSON.stringify(data, null, 2)}\n`;
+
+        await addDoc(collection(db, "inquiries"), data);
+
+        setStatus("Firestore保存完了");
+        showSuccess("送信しました。担当者が確認いたします。");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "送信済み";
+
+        setTimeout(() => {
+          if (liff.isInClient()) {
+            try {
+              liff.closeWindow();
+            } catch (e) {
+              outputEl.textContent += `[CLOSE ERROR] ${e.message || e}\n`;
+            }
+          }
+        }, 1000);
+
+      } catch (e) {
+        setStatus("送信エラー");
+        outputEl.textContent += `[SAVE ERROR] ${e.message || e}\n`;
+        alert(e.message || e);
+      }
+    }
+
+    function closePage() {
+      if (liff.isInClient()) {
+        liff.closeWindow();
+      } else {
+        alert("画面を閉じてください");
+      }
+    }
+
+    document.getElementById("submitBtn").addEventListener("click", submitInquiry);
+    document.getElementById("cancelBtn").addEventListener("click", closePage);
+
+    initLiff();
   </script>
 </body>
 </html>
