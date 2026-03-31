@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>問い合わせ一覧</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    input[type="text"], select {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #4a90e2;
+      color: white;
+    }
+
+    .inquiry-list {
+      margin-top: 20px;
+    }
+
+    .inquiry-card {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 6px;
+    }
+
+    .status-new {
+      color: #d93025;
+      font-weight: bold;
+    }
+
+    .status-done {
+      color: #188038;
+      font-weight: bold;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>問い合わせ一覧</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <label for="searchText">検索（氏名・種別・内容）</label>
+    <input type="text" id="searchText" placeholder="例: 山田 / イベント / 不具合" />
+
+    <label for="statusFilter">status絞り込み</label>
+    <select id="statusFilter">
+      <option value="all">すべて</option>
+      <option value="new">new</option>
+      <option value="done">done</option>
+    </select>
+
+    <button id="backBtn">戻る</button>
+
+    <div style="margin-top: 16px;">
+      <strong>件数:</strong> <span id="inquiryCount">0</span> 件
+    </div>
+
+    <div id="inquiryList" class="inquiry-list"></div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const mainAreaEl = document.getElementById("mainArea");
+    const outputEl = document.getElementById("output");
+    const searchTextEl = document.getElementById("searchText");
+    const statusFilterEl = document.getElementById("statusFilter");
+    const inquiryListEl = document.getElementById("inquiryList");
+    const inquiryCountEl = document.getElementById("inquiryCount");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allInquiries = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return "日時不明";
+      try {
+        return new Date(isoString).toLocaleString("ja-JP");
+      } catch {
+        return isoString;
+      }
+    }
+
+    function getStatusClass(status) {
+      return status === "done" ? "status-done" : "status-new";
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "admin" && myRole !== "master") {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", `${myRole} でログイン中です。`);
+        mainAreaEl.style.display = "block";
+        setStatus("アクセス許可");
+
+        await loadInquiries();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function loadInquiries() {
+      try {
+        setStatus("問い合わせ一覧取得中");
+
+        const snap = await getDocs(collection(db, "inquiries"));
+        allInquiries = [];
+
+        snap.forEach(docSnap => {
+          allInquiries.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        allInquiries.sort((a, b) => {
+          const aDate = a.createdAt || "";
+          const bDate = b.createdAt || "";
+          return bDate.localeCompare(aDate);
+        });
+
+        renderInquiries();
+        setStatus("問い合わせ一覧取得完了");
+      } catch (e) {
+        setStatus("問い合わせ一覧取得エラー");
+        outputEl.textContent += `[LOAD INQUIRIES ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function renderInquiries() {
+      const search = searchTextEl.value.trim().toLowerCase();
+      const statusFilter = statusFilterEl.value;
+
+      const filtered = allInquiries.filter(item => {
+        const target = `${item.lastName || ""} ${item.firstName || ""} ${item.categoryLabel || ""} ${item.message || ""}`.toLowerCase();
+        const searchOk = !search || target.includes(search);
+        const statusOk = statusFilter === "all" || (item.status || "new") === statusFilter;
+        return searchOk && statusOk;
+      });
+
+      inquiryCountEl.textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        inquiryListEl.innerHTML = "<div class='inquiry-card'>該当する問い合わせはありません。</div>";
+        return;
+      }
+
+      inquiryListEl.innerHTML = filtered.map(item => {
+        const name = `${item.lastName || ""} ${item.firstName || ""}`.trim() || "氏名未設定";
+        const status = item.status || "new";
+        return `
+          <div class="inquiry-card">
+            <strong>${name}</strong><br>
+            種別: ${item.categoryLabel || item.category || "未設定"}<br>
+            内容: ${item.message || "未入力"}<br>
+            <div class="meta">
+              日時: ${formatDate(item.createdAt)}<br>
+              status: <span class="${getStatusClass(status)}">${status}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+
+    searchTextEl.addEventListener("input", renderInquiries);
+    statusFilterEl.addEventListener("change", renderInquiries);
+
+    initLiff();
+  </script>
+</body>
+</html>
