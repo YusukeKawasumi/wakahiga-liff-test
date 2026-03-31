@@ -1,1 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>回覧板管理</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
 
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    input[type="file"], input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      color: white;
+    }
+
+    #uploadBtn {
+      background: #06c755;
+    }
+
+    #backBtn {
+      background: #4a90e2;
+    }
+
+    .history-card {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 8px;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>回覧板管理</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <label for="titleInput">回覧板タイトル</label>
+    <input type="text" id="titleInput" placeholder="例: 2026年4月回覧板" />
+
+    <label for="pdfFile">PDFファイル</label>
+    <input type="file" id="pdfFile" accept="application/pdf" />
+
+    <button id="uploadBtn">アップロードする</button>
+    <button id="backBtn">戻る</button>
+
+    <h3>アップロード履歴</h3>
+    <div id="historyList">読み込み中...</div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection,
+      addDoc
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+    import {
+      getStorage,
+      ref,
+      uploadBytes,
+      getDownloadURL
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-storage.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const mainAreaEl = document.getElementById("mainArea");
+    const outputEl = document.getElementById("output");
+    const historyListEl = document.getElementById("historyList");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allCirculars = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return "日時不明";
+      try {
+        return new Date(isoString).toLocaleString("ja-JP");
+      } catch {
+        return isoString;
+      }
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const refUser = doc(db, "users", currentUserId);
+        const snap = await getDoc(refUser);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "admin" && myRole !== "master") {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", `${myRole} でログイン中です。`);
+        mainAreaEl.style.display = "block";
+        setStatus("アクセス許可");
+
+        await loadCircularHistory();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function uploadCircular() {
+      try {
+        const title = document.getElementById("titleInput").value.trim();
+        const file = document.getElementById("pdfFile").files[0];
+
+        if (!title) {
+          alert("タイトルを入力してください");
+          return;
+        }
+
+        if (!file) {
+          alert("PDFファイルを選択してください");
+          return;
+        }
+
+        if (file.type !== "application/pdf") {
+          alert("PDFファイルを選択してください");
+          return;
+        }
+
+        setStatus("Storageアップロード中");
+
+        const storagePath = "circular/current.pdf";
+        const storageRef = ref(storage, storagePath);
+
+        await uploadBytes(storageRef, file);
+
+        const downloadUrl = await getDownloadURL(storageRef);
+
+        setStatus("Firestore記録中");
+
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        await addDoc(collection(db, "circulars"), {
+          title,
+          fileName: file.name,
+          storagePath,
+          downloadUrl,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: currentUserId,
+          uploadedByName: fullName,
+          isCurrent: true
+        });
+
+        outputEl.textContent += `[UPLOAD SUCCESS] ${title}\n`;
+        alert("回覧板をアップロードしました");
+
+        document.getElementById("titleInput").value = "";
+        document.getElementById("pdfFile").value = "";
+
+        await loadCircularHistory();
+        setStatus("アップロード完了");
+      } catch (e) {
+        setStatus("アップロードエラー");
+        outputEl.textContent += `[UPLOAD ERROR] ${e.message || e}\n`;
+        alert("アップロードに失敗しました");
+      }
+    }
+
+    async function loadCircularHistory() {
+      try {
+        const snap = await getDocs(collection(db, "circulars"));
+        allCirculars = [];
+
+        snap.forEach(docSnap => {
+          allCirculars.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        allCirculars.sort((a, b) => {
+          const aDate = a.uploadedAt || "";
+          const bDate = b.uploadedAt || "";
+          return bDate.localeCompare(aDate);
+        });
+
+        renderHistory();
+      } catch (e) {
+        outputEl.textContent += `[LOAD HISTORY ERROR] ${e.message || e}\n`;
+        historyListEl.innerHTML = "<div class='history-card'>履歴取得に失敗しました。</div>";
+      }
+    }
+
+    function renderHistory() {
+      if (allCirculars.length === 0) {
+        historyListEl.innerHTML = "<div class='history-card'>アップロード履歴はまだありません。</div>";
+        return;
+      }
+
+      historyListEl.innerHTML = allCirculars.map(item => {
+        return `
+          <div class="history-card">
+            <strong>${item.title || "タイトル未設定"}</strong><br>
+            ファイル名: ${item.fileName || "不明"}<br>
+            <div class="meta">
+              更新日時: ${formatDate(item.uploadedAt)}<br>
+              更新者: ${item.uploadedByName || "不明"}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    document.getElementById("uploadBtn").addEventListener("click", uploadCircular);
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+
+    initLiff();
+  </script>
+</body>
+</html>
