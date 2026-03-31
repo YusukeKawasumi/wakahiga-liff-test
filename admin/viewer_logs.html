@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>閲覧履歴</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #4a90e2;
+      color: white;
+    }
+
+    .summary {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 16px;
+      margin-bottom: 16px;
+    }
+
+    .log-list {
+      margin-top: 20px;
+    }
+
+    .log-card {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 6px;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>閲覧履歴</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <label for="searchText">検索（氏名・回覧物名）</label>
+    <input type="text" id="searchText" placeholder="例: 山田 / 回覧物1" />
+
+    <button id="backBtn">戻る</button>
+
+    <div class="summary">
+      <div><strong>総アクセス数:</strong> <span id="totalCount">0</span></div>
+      <div><strong>ユニークユーザー数:</strong> <span id="uniqueUserCount">0</span></div>
+      <div><strong>表示件数:</strong> <span id="filteredCount">0</span></div>
+    </div>
+
+    <div id="logList" class="log-list"></div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const mainAreaEl = document.getElementById("mainArea");
+    const outputEl = document.getElementById("output");
+    const searchTextEl = document.getElementById("searchText");
+    const logListEl = document.getElementById("logList");
+    const totalCountEl = document.getElementById("totalCount");
+    const uniqueUserCountEl = document.getElementById("uniqueUserCount");
+    const filteredCountEl = document.getElementById("filteredCount");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allLogs = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return "日時不明";
+      try {
+        return new Date(isoString).toLocaleString("ja-JP");
+      } catch {
+        return isoString;
+      }
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "admin" && myRole !== "master") {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", `${myRole} でログイン中です。`);
+        mainAreaEl.style.display = "block";
+        setStatus("アクセス許可");
+
+        await loadLogs();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function loadLogs() {
+      try {
+        setStatus("閲覧履歴取得中");
+
+        const snap = await getDocs(collection(db, "viewLogs"));
+        allLogs = [];
+
+        snap.forEach(docSnap => {
+          allLogs.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        allLogs.sort((a, b) => {
+          const aDate = a.viewedAt || "";
+          const bDate = b.viewedAt || "";
+          return bDate.localeCompare(aDate);
+        });
+
+        renderLogs();
+        setStatus("閲覧履歴取得完了");
+      } catch (e) {
+        setStatus("閲覧履歴取得エラー");
+        outputEl.textContent += `[LOAD LOGS ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function renderLogs() {
+      const search = searchTextEl.value.trim().toLowerCase();
+
+      const filtered = allLogs.filter(item => {
+        const target = `${item.lastName || ""} ${item.firstName || ""} ${item.documentName || ""}`.toLowerCase();
+        return !search || target.includes(search);
+      });
+
+      const uniqueUsers = new Set(allLogs.map(item => item.userId).filter(Boolean));
+
+      totalCountEl.textContent = allLogs.length;
+      uniqueUserCountEl.textContent = uniqueUsers.size;
+      filteredCountEl.textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        logListEl.innerHTML = "<div class='log-card'>該当する閲覧履歴はありません。</div>";
+        return;
+      }
+
+      logListEl.innerHTML = filtered.map(item => {
+        const name = `${item.lastName || ""} ${item.firstName || ""}`.trim() || "氏名未設定";
+        return `
+          <div class="log-card">
+            <strong>${name}</strong><br>
+            回覧物: ${item.documentName || "未設定"}<br>
+            <div class="meta">
+              閲覧日時: ${formatDate(item.viewedAt)}<br>
+              userId: ${item.userId || "未取得"}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+
+    searchTextEl.addEventListener("input", renderLogs);
+
+    initLiff();
+  </script>
+</body>
+</html>
