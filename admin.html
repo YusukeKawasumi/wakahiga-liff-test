@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理者メニュー</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info {
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .menu {
+      display: none;
+      margin-top: 20px;
+    }
+
+    .menu a {
+      display: block;
+      text-decoration: none;
+      background: #06c755;
+      color: white;
+      padding: 14px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+
+    .secondary {
+      background: #4a90e2 !important;
+    }
+
+    .disabled {
+      background: #999 !important;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>管理者メニュー</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="role">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="menu" class="menu">
+    <a href="./admin/roles.html">権限管理</a>
+    <a href="#" class="secondary">住民一覧（準備中）</a>
+    <a href="#" class="secondary">問い合わせ一覧（準備中）</a>
+    <a href="#" class="secondary">閲覧履歴（準備中）</a>
+    <a href="#" class="secondary">お知らせ管理（準備中）</a>
+    <a href="#" class="secondary">回覧板管理（準備中）</a>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const roleEl = document.getElementById("role");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const menuEl = document.getElementById("menu");
+    const outputEl = document.getElementById("output");
+
+    let currentUserId = "";
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAdminAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAdminAccess() {
+      try {
+        setStatus("ユーザー情報取得中");
+
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          roleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          setStatus("未登録ユーザー");
+          return;
+        }
+
+        const userData = snap.data();
+        const role = userData.role || "user";
+        const fullName = `${userData.lastName || ""} ${userData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        roleEl.textContent = role;
+
+        outputEl.textContent += `[USER DATA] ${JSON.stringify(userData, null, 2)}\n`;
+
+        if (role === "admin" || role === "master") {
+          showAccessMessage("success", `${role} でログイン中です。`);
+          menuEl.style.display = "block";
+          setStatus("管理者メニュー表示");
+        } else {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+        }
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "管理者権限の確認に失敗しました。");
+      }
+    }
+
+    initLiff();
+  </script>
+</body>
+</html>
