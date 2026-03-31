@@ -1,1 +1,408 @@
-tes
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>権限管理</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    select, input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+
+    .radio-group label {
+      display: block;
+      margin: 8px 0;
+      font-weight: normal;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 14px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #06c755;
+      color: white;
+    }
+
+    .secondary {
+      background: #4a90e2;
+    }
+
+    .user-list {
+      margin-top: 20px;
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .user-item {
+      padding: 10px 0;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .user-item:last-child {
+      border-bottom: none;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>権限管理</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <label for="searchText">検索（氏名・住所）</label>
+    <input type="text" id="searchText" placeholder="例: 山田 / 1-2-3" />
+
+    <label for="roleFilter">role絞り込み</label>
+    <select id="roleFilter">
+      <option value="all">すべて</option>
+      <option value="master">master</option>
+      <option value="admin">admin</option>
+      <option value="user">user</option>
+    </select>
+
+    <label for="userSelect">対象ユーザー</label>
+    <select id="userSelect">
+      <option value="">ユーザーを選択してください</option>
+    </select>
+
+    <label>付与する権限</label>
+    <div class="radio-group">
+      <label><input type="radio" name="role" value="master"> master</label>
+      <label><input type="radio" name="role" value="admin"> admin</label>
+      <label><input type="radio" name="role" value="user"> user</label>
+    </div>
+
+    <button id="updateBtn">更新する</button>
+    <button id="backBtn" class="secondary">戻る</button>
+
+    <div class="user-list">
+      <h3>現在の権限保持者</h3>
+      <div id="currentRoleUsers">読み込み中...</div>
+    </div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection,
+      updateDoc,
+      addDoc
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    // admin.html と同じ LIFF ID を使う
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const outputEl = document.getElementById("output");
+    const mainAreaEl = document.getElementById("mainArea");
+    const userSelectEl = document.getElementById("userSelect");
+    const currentRoleUsersEl = document.getElementById("currentRoleUsers");
+    const searchTextEl = document.getElementById("searchText");
+    const roleFilterEl = document.getElementById("roleFilter");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allUsers = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function getRoleLabel(user) {
+      return user.role || "user";
+    }
+
+    function getDisplayName(user) {
+      const name = `${user.lastName || ""} ${user.firstName || ""}`.trim();
+      return `${name || "氏名未設定"}（${user.address || "住所未設定"}）`;
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkMasterAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkMasterAccess() {
+      try {
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "master") {
+          showAccessMessage("error", "master権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", "master でログイン中です。");
+        mainAreaEl.style.display = "block";
+        setStatus("権限確認完了");
+
+        await loadUsers();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function loadUsers() {
+      try {
+        setStatus("ユーザー一覧取得中");
+        const snap = await getDocs(collection(db, "users"));
+
+        allUsers = [];
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          allUsers.push({
+            docId: docSnap.id,
+            ...data
+          });
+        });
+
+        allUsers.sort((a, b) => {
+          const aName = `${a.lastName || ""}${a.firstName || ""}`;
+          const bName = `${b.lastName || ""}${b.firstName || ""}`;
+          return aName.localeCompare(bName, "ja");
+        });
+
+        renderUserSelect();
+        renderCurrentRoleUsers();
+
+        setStatus("ユーザー一覧取得完了");
+      } catch (e) {
+        setStatus("ユーザー一覧取得エラー");
+        outputEl.textContent += `[LOAD USERS ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function renderUserSelect() {
+      const search = searchTextEl.value.trim().toLowerCase();
+      const roleFilter = roleFilterEl.value;
+
+      userSelectEl.innerHTML = `<option value="">ユーザーを選択してください</option>`;
+
+      const filtered = allUsers.filter(user => {
+        const role = user.role || "user";
+        const searchTarget = `${user.lastName || ""} ${user.firstName || ""} ${user.address || ""}`.toLowerCase();
+
+        const searchOk = !search || searchTarget.includes(search);
+        const roleOk = roleFilter === "all" || role === roleFilter;
+
+        return searchOk && roleOk;
+      });
+
+      filtered.forEach(user => {
+        const option = document.createElement("option");
+        option.value = user.docId;
+        option.textContent = `${getDisplayName(user)} [${getRoleLabel(user)}]`;
+        userSelectEl.appendChild(option);
+      });
+    }
+
+    function renderCurrentRoleUsers() {
+      const targetUsers = allUsers.filter(user => {
+        const role = user.role || "user";
+        return role === "master" || role === "admin";
+      });
+
+      if (targetUsers.length === 0) {
+        currentRoleUsersEl.textContent = "該当ユーザーはいません。";
+        return;
+      }
+
+      currentRoleUsersEl.innerHTML = targetUsers.map(user => {
+        return `
+          <div class="user-item">
+            <strong>${getDisplayName(user)}</strong><br>
+            role: ${getRoleLabel(user)}
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function updateRole() {
+      try {
+        const targetUserId = userSelectEl.value;
+        const selectedRole = document.querySelector('input[name="role"]:checked');
+
+        if (!targetUserId) {
+          alert("対象ユーザーを選択してください");
+          return;
+        }
+
+        if (!selectedRole) {
+          alert("付与する権限を選択してください");
+          return;
+        }
+
+        const targetUser = allUsers.find(user => user.docId === targetUserId);
+        if (!targetUser) {
+          alert("対象ユーザーが見つかりません");
+          return;
+        }
+
+        const beforeRole = targetUser.role || "user";
+        const afterRole = selectedRole.value;
+        const targetName = `${targetUser.lastName || ""} ${targetUser.firstName || ""}`.trim();
+
+        const ok = confirm(`${targetName} さんの権限を ${beforeRole} → ${afterRole} に変更しますか？`);
+        if (!ok) return;
+
+        await updateDoc(doc(db, "users", targetUserId), {
+          role: afterRole
+        });
+
+        await addDoc(collection(db, "adminLogs"), {
+          action: "role_update",
+          targetUserId: targetUserId,
+          targetName: targetName,
+          beforeRole: beforeRole,
+          afterRole: afterRole,
+          updatedBy: currentUserId,
+          updatedByName: `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim(),
+          createdAt: new Date().toISOString()
+        });
+
+        outputEl.textContent += `[ROLE UPDATE] ${targetName}: ${beforeRole} -> ${afterRole}\n`;
+
+        alert("権限を更新しました");
+        await loadUsers();
+      } catch (e) {
+        outputEl.textContent += `[UPDATE ROLE ERROR] ${e.message || e}\n`;
+        alert("権限更新に失敗しました");
+      }
+    }
+
+    document.getElementById("updateBtn").addEventListener("click", updateRole);
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+    searchTextEl.addEventListener("input", renderUserSelect);
+    roleFilterEl.addEventListener("change", renderUserSelect);
+
+    initLiff();
+  </script>
+</body>
+</html>
