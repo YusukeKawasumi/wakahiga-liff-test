@@ -1,1 +1,434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>お知らせ管理</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
 
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      color: white;
+    }
+
+    #saveBtn {
+      background: #06c755;
+    }
+
+    #backBtn {
+      background: #4a90e2;
+    }
+
+    .notice-list {
+      margin-top: 20px;
+    }
+
+    .notice-card {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 8px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-right: 6px;
+      color: white;
+    }
+
+    .published {
+      background: #06c755;
+    }
+
+    .deleted {
+      background: #999;
+    }
+
+    .subBtn {
+      background: #666;
+      margin-top: 8px;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>お知らせ管理</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <h3>現在編集中</h3>
+    <div class="info">
+      <div><strong>編集対象ID:</strong> <span id="editingId">新規作成</span></div>
+    </div>
+
+    <label for="noticeText"><strong>お知らせ本文</strong></label>
+    <textarea id="noticeText" placeholder="お知らせ内容を入力してください"></textarea>
+
+    <button id="saveBtn">保存する</button>
+    <button id="backBtn">戻る</button>
+
+    <div class="notice-list">
+      <h3>お知らせ一覧</h3>
+      <div id="noticeList">読み込み中...</div>
+    </div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection,
+      addDoc,
+      updateDoc
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const mainAreaEl = document.getElementById("mainArea");
+    const outputEl = document.getElementById("output");
+    const noticeTextEl = document.getElementById("noticeText");
+    const editingIdEl = document.getElementById("editingId");
+    const noticeListEl = document.getElementById("noticeList");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allNotices = [];
+    let editingNoticeId = null;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return "日時不明";
+      try {
+        return new Date(isoString).toLocaleString("ja-JP");
+      } catch {
+        return isoString;
+      }
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "admin" && myRole !== "master") {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", `${myRole} でログイン中です。`);
+        mainAreaEl.style.display = "block";
+        setStatus("アクセス許可");
+
+        await loadNotices();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function loadNotices() {
+      try {
+        setStatus("お知らせ一覧取得中");
+
+        const snap = await getDocs(collection(db, "notices"));
+        allNotices = [];
+
+        snap.forEach(docSnap => {
+          allNotices.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        allNotices.sort((a, b) => {
+          const aDate = a.updatedAt || a.createdAt || "";
+          const bDate = b.updatedAt || b.createdAt || "";
+          return bDate.localeCompare(aDate);
+        });
+
+        renderNoticeList();
+        setStatus("お知らせ一覧取得完了");
+      } catch (e) {
+        setStatus("お知らせ取得エラー");
+        outputEl.textContent += `[LOAD NOTICES ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function renderNoticeList() {
+      if (allNotices.length === 0) {
+        noticeListEl.innerHTML = "<div class='notice-card'>お知らせはまだありません。</div>";
+        return;
+      }
+
+      noticeListEl.innerHTML = allNotices.map(item => {
+        const publishedBadge = item.isPublished ? `<span class="badge published">公開中</span>` : "";
+        const deletedBadge = item.isDeleted ? `<span class="badge deleted">削除済み</span>` : "";
+
+        return `
+          <div class="notice-card">
+            <div>${publishedBadge}${deletedBadge}</div>
+            <div>${item.text || ""}</div>
+            <div class="meta">
+              作成: ${formatDate(item.createdAt)}<br>
+              更新: ${formatDate(item.updatedAt)}<br>
+              作成者: ${item.createdByName || "不明"}<br>
+              更新者: ${item.updatedByName || "不明"}
+            </div>
+            <button class="subBtn" onclick="window.editNotice('${item.docId}')">再編集</button>
+            <button class="subBtn" onclick="window.togglePublish('${item.docId}')">
+              ${item.isPublished ? "公開を外す" : "公開にする"}
+            </button>
+            <button class="subBtn" onclick="window.toggleDelete('${item.docId}')">
+              ${item.isDeleted ? "削除を取り消す" : "削除する"}
+            </button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function saveNotice() {
+      try {
+        const text = noticeTextEl.value.trim();
+
+        if (!text) {
+          alert("本文を入力してください");
+          return;
+        }
+
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        if (editingNoticeId) {
+          const ok = confirm("このお知らせを更新しますか？");
+          if (!ok) return;
+
+          await updateDoc(doc(db, "notices", editingNoticeId), {
+            text,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUserId,
+            updatedByName: fullName
+          });
+
+          outputEl.textContent += `[NOTICE UPDATE] ${editingNoticeId}\n`;
+          alert("お知らせを更新しました");
+        } else {
+          await addDoc(collection(db, "notices"), {
+            text,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdBy: currentUserId,
+            createdByName: fullName,
+            updatedBy: currentUserId,
+            updatedByName: fullName,
+            isPublished: true,
+            isDeleted: false
+          });
+
+          outputEl.textContent += `[NOTICE CREATE] 新規作成\n`;
+          alert("お知らせを作成しました");
+        }
+
+        noticeTextEl.value = "";
+        editingNoticeId = null;
+        editingIdEl.textContent = "新規作成";
+
+        await loadNotices();
+      } catch (e) {
+        outputEl.textContent += `[SAVE NOTICE ERROR] ${e.message || e}\n`;
+        alert("保存に失敗しました");
+      }
+    }
+
+    window.editNotice = function(docId) {
+      const target = allNotices.find(item => item.docId === docId);
+      if (!target) return;
+
+      noticeTextEl.value = target.text || "";
+      editingNoticeId = docId;
+      editingIdEl.textContent = docId;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    window.togglePublish = async function(docId) {
+      const target = allNotices.find(item => item.docId === docId);
+      if (!target) return;
+
+      const nextValue = !target.isPublished;
+      const ok = confirm(nextValue ? "このお知らせを公開にしますか？" : "このお知らせの公開を外しますか？");
+      if (!ok) return;
+
+      await updateDoc(doc(db, "notices", docId), {
+        isPublished: nextValue,
+        updatedAt: new Date().toISOString(),
+        updatedBy: currentUserId,
+        updatedByName: `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim()
+      });
+
+      await loadNotices();
+    };
+
+    window.toggleDelete = async function(docId) {
+      const target = allNotices.find(item => item.docId === docId);
+      if (!target) return;
+
+      const nextValue = !target.isDeleted;
+      const ok = confirm(nextValue ? "このお知らせを削除扱いにしますか？" : "このお知らせの削除扱いを解除しますか？");
+      if (!ok) return;
+
+      await updateDoc(doc(db, "notices", docId), {
+        isDeleted: nextValue,
+        updatedAt: new Date().toISOString(),
+        updatedBy: currentUserId,
+        updatedByName: `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim()
+      });
+
+      await loadNotices();
+    };
+
+    document.getElementById("saveBtn").addEventListener("click", saveNotice);
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+
+    initLiff();
+  </script>
+</body>
+</html>
