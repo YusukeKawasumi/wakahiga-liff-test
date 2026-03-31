@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>お知らせ</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+      background: #fafafa;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    .notice-list {
+      margin-top: 20px;
+    }
+
+    .notice-card {
+      background: white;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .notice-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 10px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #666;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #4a90e2;
+      color: white;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>お知らせ</h2>
+  <p>公開中のお知らせを表示しています。</p>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="noticeList" class="notice-list">読み込み中...</div>
+
+  <button id="closeBtn">閉じる</button>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      getDocs,
+      collection
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+
+    const LIFF_ID = "2009661810-ddUlO5TI";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const messageEl = document.getElementById("message");
+    const noticeListEl = document.getElementById("noticeList");
+    const outputEl = document.getElementById("output");
+
+    let currentUserId = "";
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return "日時不明";
+      try {
+        return new Date(isoString).toLocaleString("ja-JP");
+      } catch {
+        return isoString;
+      }
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await loadNotices();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        messageEl.innerHTML = `<div class="error">初期化に失敗しました。</div>`;
+        noticeListEl.innerHTML = "";
+      }
+    }
+
+    async function loadNotices() {
+      try {
+        setStatus("お知らせ取得中");
+
+        const snap = await getDocs(collection(db, "notices"));
+        let notices = [];
+
+        snap.forEach(docSnap => {
+          notices.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        notices = notices.filter(item => {
+          return item.isPublished === true && item.isDeleted !== true;
+        });
+
+        notices.sort((a, b) => {
+          const aDate = a.updatedAt || a.createdAt || "";
+          const bDate = b.updatedAt || b.createdAt || "";
+          return bDate.localeCompare(aDate);
+        });
+
+        renderNotices(notices);
+        setStatus("お知らせ取得完了");
+      } catch (e) {
+        setStatus("お知らせ取得エラー");
+        outputEl.textContent += `[LOAD NOTICES ERROR] ${e.message || e}\n`;
+        messageEl.innerHTML = `<div class="error">お知らせの取得に失敗しました。</div>`;
+        noticeListEl.innerHTML = "";
+      }
+    }
+
+    function renderNotices(notices) {
+      if (notices.length === 0) {
+        messageEl.innerHTML = `<div class="info">現在公開中のお知らせはありません。</div>`;
+        noticeListEl.innerHTML = "";
+        return;
+      }
+
+      messageEl.innerHTML = `<div class="info">公開中のお知らせは ${notices.length} 件です。</div>`;
+
+      noticeListEl.innerHTML = notices.map(item => {
+        return `
+          <div class="notice-card">
+            <div class="notice-text">${escapeHtml(item.text || "")}</div>
+            <div class="meta">
+              更新日時: ${formatDate(item.updatedAt || item.createdAt)}<br>
+              更新者: ${item.updatedByName || item.createdByName || "不明"}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    document.getElementById("closeBtn").addEventListener("click", () => {
+      if (liff.isInClient()) {
+        liff.closeWindow();
+      } else {
+        alert("画面を閉じてください");
+      }
+    });
+
+    initLiff();
+  </script>
+</body>
+</html>
