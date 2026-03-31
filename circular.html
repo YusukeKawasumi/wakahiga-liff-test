@@ -1,6 +1,49 @@
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>回覧板</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
-<div id="status">初期化前</div>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #fff;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100vh;
+      border: none;
+      display: block;
+    }
+
+    .center {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    .btn {
+      margin-top: 20px;
+      padding: 12px 20px;
+      border: none;
+      background: #06c755;
+      color: white;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app" class="center">読み込み中...</div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
@@ -12,6 +55,12 @@ import {
   collection
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
+import {
+  getStorage,
+  ref,
+  getDownloadURL
+} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-storage.js";
+
 const firebaseConfig = {
   apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
   authDomain: "wakahiga-test.firebaseapp.com",
@@ -21,80 +70,94 @@ const firebaseConfig = {
   appId: "1:369904902476:web:3660b07939c9fe2347afe9"
 };
 
+const LIFF_ID = "2009623625-55OO77NK";
+
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 let currentUserId = "";
-
-function setStatus(text) {
-  document.getElementById("status").textContent = text;
-}
+let userData = null;
 
 async function init() {
   try {
-    setStatus("LIFF初期化中...");
-    await liff.init({ liffId: "2009623625-55OO77NK" });
+    await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {
-      setStatus("未ログインのためログインへ");
       liff.login();
       return;
     }
 
-    setStatus("プロフィール取得中...");
     const profile = await liff.getProfile();
     currentUserId = profile.userId;
 
-    setStatus("ユーザー確認中...");
-    await checkUserAndShow();
+    await checkUser();
   } catch (e) {
-    setStatus("initエラー: " + (e.message || e));
+    console.error(e);
+    showError("初期化エラー");
   }
 }
 
-async function checkUserAndShow() {
+async function checkUser() {
+  const refUser = doc(db, "users", currentUserId);
+  const snap = await getDoc(refUser);
+
+  if (!snap.exists()) {
+    document.body.innerHTML = `
+      <div class="center">
+        <div>
+          <h2>未登録です</h2>
+          <p>先に登録ページからご登録ください。</p>
+          <button class="btn" onclick="location.href='index.html'">
+            登録ページへ
+          </button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  userData = snap.data();
+
+  await loadPDF();
+}
+
+async function loadPDF() {
   try {
-    const ref = doc(db, "users", currentUserId);
-    const snap = await getDoc(ref);
+    const storageRef = ref(storage, "circular/current.pdf");
+    const url = await getDownloadURL(storageRef);
 
-    if (!snap.exists()) {
-      document.body.innerHTML = `
-        <h2>未登録です</h2>
-        <p>先に登録してください</p>
-        <button id="goRegisterBtn">登録ページへ</button>
-      `;
-
-      document.getElementById("goRegisterBtn").addEventListener("click", () => {
-        location.href = "index.html";
-      });
-
-      return;
-    }
-
-    const userData = snap.data();
-
-    setStatus("閲覧履歴保存中...");
+    // 閲覧ログを保存
     await addDoc(collection(db, "viewLogs"), {
       userId: currentUserId,
-      lastName: userData.lastName,
-      firstName: userData.firstName,
-      documentName: "回覧物1",
+      lastName: userData.lastName || "",
+      firstName: userData.firstName || "",
+      documentName: "回覧板",
       viewedAt: new Date().toISOString()
     });
 
+    // PDF表示
     document.body.innerHTML = `
-      <iframe
-        src="https://yusukekawasumi.github.io/wakahiga-liff-test/sample.pdf"
-        style="width:100%; height:100vh; border:none;">
-      </iframe>
+      <iframe src="${url}"></iframe>
     `;
   } catch (e) {
-    document.body.innerHTML = `
-      <h2>エラーが発生しました</h2>
-      <pre>${e.message || e}</pre>
-    `;
+    console.error(e);
+    showError("回覧板がまだアップロードされていません");
   }
+}
+
+function showError(msg) {
+  document.body.innerHTML = `
+    <div class="center">
+      <div>
+        <h2>${msg}</h2>
+      </div>
+    </div>
+  `;
 }
 
 init();
 </script>
+
+</body>
+</html>
