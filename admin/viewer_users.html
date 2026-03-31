@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>住民一覧</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .info, .success, .error {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .info {
+      background: #f4f4f4;
+    }
+
+    .success {
+      background: #e8f5e9;
+      border: 1px solid #06c755;
+    }
+
+    .error {
+      background: #fdecea;
+      border: 1px solid #d93025;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 16px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      background: #4a90e2;
+      color: white;
+    }
+
+    .user-list {
+      margin-top: 20px;
+    }
+
+    .user-card {
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .user-card strong {
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>住民一覧</h2>
+
+  <div class="info">
+    <div><strong>状態:</strong> <span id="status">初期化前</span></div>
+    <div><strong>userId:</strong> <span id="userId">Loading...</span></div>
+    <div><strong>氏名:</strong> <span id="displayName">取得中...</span></div>
+    <div><strong>role:</strong> <span id="myRole">取得中...</span></div>
+  </div>
+
+  <div id="accessMessage"></div>
+
+  <div id="mainArea" style="display:none;">
+    <label for="searchText">検索（氏名・住所）</label>
+    <input type="text" id="searchText" placeholder="例: 山田 / 1-2-3" />
+
+    <button id="backBtn">戻る</button>
+
+    <div style="margin-top: 16px;">
+      <strong>登録人数:</strong> <span id="userCount">0</span> 人
+    </div>
+
+    <div id="userList" class="user-list"></div>
+  </div>
+
+  <h3>デバッグ</h3>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      getDocs,
+      collection
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
+      authDomain: "wakahiga-test.firebaseapp.com",
+      projectId: "wakahiga-test",
+      storageBucket: "wakahiga-test.firebasestorage.app",
+      messagingSenderId: "369904902476",
+      appId: "1:369904902476:web:3660b07939c9fe2347afe9"
+    };
+    
+    const LIFF_ID = "2009656225-wPkU5qyM";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById("status");
+    const userIdEl = document.getElementById("userId");
+    const displayNameEl = document.getElementById("displayName");
+    const myRoleEl = document.getElementById("myRole");
+    const accessMessageEl = document.getElementById("accessMessage");
+    const mainAreaEl = document.getElementById("mainArea");
+    const outputEl = document.getElementById("output");
+    const searchTextEl = document.getElementById("searchText");
+    const userListEl = document.getElementById("userList");
+    const userCountEl = document.getElementById("userCount");
+
+    let currentUserId = "";
+    let currentUserData = null;
+    let allUsers = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      outputEl.textContent += `[STATUS] ${text}\n`;
+    }
+
+    function showAccessMessage(type, text) {
+      accessMessageEl.className = type;
+      accessMessageEl.textContent = text;
+    }
+
+    function getRole(user) {
+      return user.role || "user";
+    }
+
+    function getDisplayName(user) {
+      return `${user.lastName || ""} ${user.firstName || ""}`.trim() || "氏名未設定";
+    }
+
+    async function initLiff() {
+      try {
+        setStatus("LIFF初期化開始");
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("未ログインのためloginへ");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        userIdEl.textContent = currentUserId;
+        setStatus("userId取得完了");
+
+        await checkAccess();
+      } catch (e) {
+        setStatus("LIFFエラー");
+        outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "初期化に失敗しました。");
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const ref = doc(db, "users", currentUserId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          displayNameEl.textContent = "未登録";
+          myRoleEl.textContent = "user";
+          showAccessMessage("error", "登録情報が見つかりません。");
+          return;
+        }
+
+        currentUserData = snap.data();
+        const myRole = currentUserData.role || "user";
+        const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        displayNameEl.textContent = fullName || "氏名未設定";
+        myRoleEl.textContent = myRole;
+
+        if (myRole !== "admin" && myRole !== "master") {
+          showAccessMessage("error", "管理者権限がありません。");
+          setStatus("権限なし");
+          return;
+        }
+
+        showAccessMessage("success", `${myRole} でログイン中です。`);
+        mainAreaEl.style.display = "block";
+        setStatus("アクセス許可");
+
+        await loadUsers();
+      } catch (e) {
+        setStatus("権限確認エラー");
+        outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
+        showAccessMessage("error", "権限確認に失敗しました。");
+      }
+    }
+
+    async function loadUsers() {
+      try {
+        setStatus("住民一覧取得中");
+
+        const snap = await getDocs(collection(db, "users"));
+        allUsers = [];
+
+        snap.forEach(docSnap => {
+          allUsers.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
+        allUsers.sort((a, b) => {
+          const aName = `${a.lastName || ""}${a.firstName || ""}`;
+          const bName = `${b.lastName || ""}${b.firstName || ""}`;
+          return aName.localeCompare(bName, "ja");
+        });
+
+        renderUsers();
+        setStatus("住民一覧取得完了");
+      } catch (e) {
+        setStatus("住民一覧取得エラー");
+        outputEl.textContent += `[LOAD USERS ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function renderUsers() {
+      const search = searchTextEl.value.trim().toLowerCase();
+
+      const filtered = allUsers.filter(user => {
+        const searchTarget = `${user.lastName || ""} ${user.firstName || ""} ${user.address || ""}`.toLowerCase();
+        return !search || searchTarget.includes(search);
+      });
+
+      userCountEl.textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        userListEl.innerHTML = "<div class='user-card'>該当する住民はいません。</div>";
+        return;
+      }
+
+      userListEl.innerHTML = filtered.map(user => {
+        return `
+          <div class="user-card">
+            <strong>${getDisplayName(user)}</strong><br>
+            住所: ${user.address || "未設定"}<br>
+            連絡先: ${user.phone || "未設定"}<br>
+            role: ${getRole(user)}
+          </div>
+        `;
+      }).join("");
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "../admin.html";
+    });
+
+    searchTextEl.addEventListener("input", renderUsers);
+
+    initLiff();
+  </script>
+</body>
+</html>
