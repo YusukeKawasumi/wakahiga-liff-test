@@ -43,7 +43,7 @@
       font-weight: bold;
     }
 
-    input[type="file"], input[type="text"] {
+    input[type="file"] {
       width: 100%;
       padding: 10px;
       box-sizing: border-box;
@@ -82,6 +82,16 @@
       margin-top: 8px;
     }
 
+    .current-badge {
+      display: inline-block;
+      background: #06c755;
+      color: white;
+      font-size: 12px;
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-bottom: 8px;
+    }
+
     pre {
       background: #f4f4f4;
       padding: 12px;
@@ -104,8 +114,9 @@
   <div id="accessMessage"></div>
 
   <div id="mainArea" style="display:none;">
-    <label for="titleInput">回覧板タイトル</label>
-    <input type="text" id="titleInput" placeholder="例: 2026年4月回覧板" />
+    <div class="info">
+      アップロードすると、回覧板名は自動で <strong>回覧板_YYYYMMDD</strong> 形式で作成されます。
+    </div>
 
     <label for="pdfFile">PDFファイル</label>
     <input type="file" id="pdfFile" accept="application/pdf" />
@@ -128,7 +139,10 @@
       getDoc,
       getDocs,
       collection,
-      addDoc
+      addDoc,
+      updateDoc,
+      query,
+      where
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
     import {
       getStorage,
@@ -182,6 +196,18 @@
       } catch {
         return isoString;
       }
+    }
+
+    function getTodayString() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      return `${y}${m}${d}`;
+    }
+
+    function buildDocumentName() {
+      return `回覧板_${getTodayString()}`;
     }
 
     async function initLiff() {
@@ -247,13 +273,7 @@
 
     async function uploadCircular() {
       try {
-        const title = document.getElementById("titleInput").value.trim();
         const file = document.getElementById("pdfFile").files[0];
-
-        if (!title) {
-          alert("タイトルを入力してください");
-          return;
-        }
 
         if (!file) {
           alert("PDFファイルを選択してください");
@@ -265,34 +285,48 @@
           return;
         }
 
-        setStatus("Storageアップロード中");
-
+        const documentName = buildDocumentName();
         const storagePath = "circular/current.pdf";
-        const storageRef = ref(storage, storagePath);
 
+        setStatus("Storageアップロード中");
+        outputEl.textContent += `[UPLOAD TARGET] ${documentName}\n`;
+
+        const storageRef = ref(storage, storagePath);
         await uploadBytes(storageRef, file);
 
         const downloadUrl = await getDownloadURL(storageRef);
 
-        setStatus("Firestore記録中");
+        setStatus("Firestore更新中");
 
         const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
 
+        // 既存の current を false にする
+        const q = query(collection(db, "circulars"), where("isCurrent", "==", true));
+        const currentSnap = await getDocs(q);
+
+        for (const docSnap of currentSnap.docs) {
+          await updateDoc(doc(db, "circulars", docSnap.id), {
+            isCurrent: false
+          });
+        }
+
+        // 新しい current を追加
         await addDoc(collection(db, "circulars"), {
-          title,
-          fileName: file.name,
-          storagePath,
-          downloadUrl,
+          title: documentName,
+          documentName: documentName,
+          originalFileName: file.name,
+          fileName: "current.pdf",
+          storagePath: storagePath,
+          downloadUrl: downloadUrl,
           uploadedAt: new Date().toISOString(),
           uploadedBy: currentUserId,
           uploadedByName: fullName,
           isCurrent: true
         });
 
-        outputEl.textContent += `[UPLOAD SUCCESS] ${title}\n`;
-        alert("回覧板をアップロードしました");
+        outputEl.textContent += `[UPLOAD SUCCESS] ${documentName}\n`;
+        alert(`回覧板をアップロードしました\n${documentName}`);
 
-        document.getElementById("titleInput").value = "";
         document.getElementById("pdfFile").value = "";
 
         await loadCircularHistory();
@@ -338,8 +372,10 @@
       historyListEl.innerHTML = allCirculars.map(item => {
         return `
           <div class="history-card">
-            <strong>${item.title || "タイトル未設定"}</strong><br>
-            ファイル名: ${item.fileName || "不明"}<br>
+            ${item.isCurrent ? `<div class="current-badge">最新</div>` : ``}
+            <strong>${item.documentName || "名称未設定"}</strong><br>
+            元ファイル名: ${item.originalFileName || "不明"}<br>
+            保存ファイル名: ${item.fileName || "不明"}<br>
             <div class="meta">
               更新日時: ${formatDate(item.uploadedAt)}<br>
               更新者: ${item.uploadedByName || "不明"}
