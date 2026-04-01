@@ -17,7 +17,7 @@
       margin-bottom: 8px;
     }
 
-    .info, .error {
+    .info, .error, .newbox {
       padding: 12px;
       border-radius: 8px;
       margin-bottom: 16px;
@@ -32,6 +32,11 @@
       border: 1px solid #d93025;
     }
 
+    .newbox {
+      background: #fff8e1;
+      border: 1px solid #f9ab00;
+    }
+
     .notice-list {
       margin-top: 20px;
     }
@@ -42,6 +47,7 @@
       padding: 14px;
       margin-bottom: 14px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      position: relative;
     }
 
     .notice-text {
@@ -53,6 +59,16 @@
     .meta {
       font-size: 13px;
       color: #666;
+    }
+
+    .badge-new {
+      display: inline-block;
+      background: #d93025;
+      color: white;
+      font-size: 12px;
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-bottom: 8px;
     }
 
     button {
@@ -85,7 +101,7 @@
   </div>
 
   <div id="message"></div>
-
+  <div id="newSummary"></div>
   <div id="noticeList" class="notice-list">読み込み中...</div>
 
   <button id="closeBtn">閉じる</button>
@@ -98,7 +114,10 @@
     import {
       getFirestore,
       getDocs,
-      collection
+      collection,
+      doc,
+      getDoc,
+      setDoc
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -118,10 +137,12 @@
     const statusEl = document.getElementById("status");
     const userIdEl = document.getElementById("userId");
     const messageEl = document.getElementById("message");
+    const newSummaryEl = document.getElementById("newSummary");
     const noticeListEl = document.getElementById("noticeList");
     const outputEl = document.getElementById("output");
 
     let currentUserId = "";
+    let lastViewedAt = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -135,6 +156,15 @@
       } catch {
         return isoString;
       }
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
     async function initLiff() {
@@ -153,12 +183,45 @@
         userIdEl.textContent = currentUserId;
         setStatus("userId取得完了");
 
+        await loadLastViewedAt();
         await loadNotices();
+        await saveLastViewedAt();
       } catch (e) {
         setStatus("LIFFエラー");
         outputEl.textContent += `[LIFF ERROR] ${e.message || e}\n`;
         messageEl.innerHTML = `<div class="error">初期化に失敗しました。</div>`;
         noticeListEl.innerHTML = "";
+      }
+    }
+
+    async function loadLastViewedAt() {
+      try {
+        setStatus("前回閲覧日時取得中");
+        const refView = doc(db, "noticeViews", currentUserId);
+        const snap = await getDoc(refView);
+
+        if (snap.exists()) {
+          lastViewedAt = snap.data().lastViewedAt || null;
+          outputEl.textContent += `[LAST VIEWED] ${lastViewedAt}\n`;
+        } else {
+          lastViewedAt = null;
+          outputEl.textContent += `[LAST VIEWED] 初回閲覧\n`;
+        }
+      } catch (e) {
+        outputEl.textContent += `[LOAD NOTICE VIEW ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    async function saveLastViewedAt() {
+      try {
+        await setDoc(doc(db, "noticeViews", currentUserId), {
+          userId: currentUserId,
+          lastViewedAt: new Date().toISOString()
+        }, { merge: true });
+
+        setStatus("閲覧日時保存完了");
+      } catch (e) {
+        outputEl.textContent += `[SAVE NOTICE VIEW ERROR] ${e.message || e}\n`;
       }
     }
 
@@ -196,6 +259,12 @@
       }
     }
 
+    function isNewNotice(item) {
+      if (!lastViewedAt) return true;
+      const targetTime = item.updatedAt || item.createdAt || "";
+      return targetTime > lastViewedAt;
+    }
+
     function renderNotices(notices) {
       if (notices.length === 0) {
         messageEl.innerHTML = `<div class="info">現在公開中のお知らせはありません。</div>`;
@@ -203,11 +272,21 @@
         return;
       }
 
+      const newCount = notices.filter(isNewNotice).length;
+
       messageEl.innerHTML = `<div class="info">公開中のお知らせは ${notices.length} 件です。</div>`;
 
+      if (newCount > 0) {
+        newSummaryEl.innerHTML = `<div class="newbox">新着のお知らせが ${newCount} 件あります。</div>`;
+      } else {
+        newSummaryEl.innerHTML = `<div class="info">新着のお知らせはありません。</div>`;
+      }
+
       noticeListEl.innerHTML = notices.map(item => {
+        const isNew = isNewNotice(item);
         return `
           <div class="notice-card">
+            ${isNew ? `<div class="badge-new">新着</div>` : ``}
             <div class="notice-text">${escapeHtml(item.text || "")}</div>
             <div class="meta">
               更新日時: ${formatDate(item.updatedAt || item.createdAt)}<br>
@@ -216,15 +295,6 @@
           </div>
         `;
       }).join("");
-    }
-
-    function escapeHtml(str) {
-      return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
     }
 
     document.getElementById("closeBtn").addEventListener("click", () => {
