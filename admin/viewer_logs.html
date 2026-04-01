@@ -43,7 +43,7 @@
       font-weight: bold;
     }
 
-    input[type="text"] {
+    input[type="text"], select {
       width: 100%;
       padding: 10px;
       box-sizing: border-box;
@@ -70,11 +70,11 @@
       margin-bottom: 16px;
     }
 
-    .log-list {
+    .log-list, .summary-list {
       margin-top: 20px;
     }
 
-    .log-card {
+    .log-card, .summary-card {
       background: #f4f4f4;
       border-radius: 8px;
       padding: 12px;
@@ -85,6 +85,10 @@
       font-size: 13px;
       color: #555;
       margin-top: 6px;
+    }
+
+    .hidden {
+      display: none;
     }
 
     pre {
@@ -109,8 +113,22 @@
   <div id="accessMessage"></div>
 
   <div id="mainArea" style="display:none;">
+    <label for="viewMode">表示モード</label>
+    <select id="viewMode">
+      <option value="list">一覧</option>
+      <option value="summary">集計</option>
+    </select>
+
+    <label for="limitCount">表示件数</label>
+    <select id="limitCount">
+      <option value="20">20件</option>
+      <option value="50">50件</option>
+      <option value="100">100件</option>
+      <option value="all">すべて</option>
+    </select>
+
     <label for="searchText">検索（氏名・回覧物名）</label>
-    <input type="text" id="searchText" placeholder="例: 山田 / 回覧物1" />
+    <input type="text" id="searchText" placeholder="例: 山田 / 回覧板" />
 
     <button id="backBtn">戻る</button>
 
@@ -121,6 +139,7 @@
     </div>
 
     <div id="logList" class="log-list"></div>
+    <div id="summaryList" class="summary-list hidden"></div>
   </div>
 
   <h3>デバッグ</h3>
@@ -146,7 +165,7 @@
     };
 
     const LIFF_ID = "2009656225-wPkU5qyM";
-
+　
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
@@ -159,9 +178,12 @@
     const outputEl = document.getElementById("output");
     const searchTextEl = document.getElementById("searchText");
     const logListEl = document.getElementById("logList");
+    const summaryListEl = document.getElementById("summaryList");
     const totalCountEl = document.getElementById("totalCount");
     const uniqueUserCountEl = document.getElementById("uniqueUserCount");
     const filteredCountEl = document.getElementById("filteredCount");
+    const viewModeEl = document.getElementById("viewMode");
+    const limitCountEl = document.getElementById("limitCount");
 
     let currentUserId = "";
     let currentUserData = null;
@@ -267,7 +289,7 @@
           return bDate.localeCompare(aDate);
         });
 
-        renderLogs();
+        renderAll();
         setStatus("閲覧履歴取得完了");
       } catch (e) {
         setStatus("閲覧履歴取得エラー");
@@ -275,20 +297,42 @@
       }
     }
 
-    function renderLogs() {
+    function getFilteredLogs() {
       const search = searchTextEl.value.trim().toLowerCase();
+      const limitValue = limitCountEl.value;
 
-      const filtered = allLogs.filter(item => {
+      let filtered = allLogs.filter(item => {
         const target = `${item.lastName || ""} ${item.firstName || ""} ${item.documentName || ""}`.toLowerCase();
         return !search || target.includes(search);
       });
 
+      if (limitValue !== "all") {
+        filtered = filtered.slice(0, Number(limitValue));
+      }
+
+      return filtered;
+    }
+
+    function renderAll() {
+      const filtered = getFilteredLogs();
       const uniqueUsers = new Set(allLogs.map(item => item.userId).filter(Boolean));
 
       totalCountEl.textContent = allLogs.length;
       uniqueUserCountEl.textContent = uniqueUsers.size;
       filteredCountEl.textContent = filtered.length;
 
+      if (viewModeEl.value === "list") {
+        logListEl.classList.remove("hidden");
+        summaryListEl.classList.add("hidden");
+        renderList(filtered);
+      } else {
+        logListEl.classList.add("hidden");
+        summaryListEl.classList.remove("hidden");
+        renderSummary(filtered);
+      }
+    }
+
+    function renderList(filtered) {
       if (filtered.length === 0) {
         logListEl.innerHTML = "<div class='log-card'>該当する閲覧履歴はありません。</div>";
         return;
@@ -309,11 +353,52 @@
       }).join("");
     }
 
+    function renderSummary(filtered) {
+      if (filtered.length === 0) {
+        summaryListEl.innerHTML = "<div class='summary-card'>集計対象の閲覧履歴はありません。</div>";
+        return;
+      }
+
+      const byDocument = {};
+
+      filtered.forEach(item => {
+        const key = item.documentName || "未設定";
+        if (!byDocument[key]) {
+          byDocument[key] = {
+            total: 0,
+            users: new Set()
+          };
+        }
+        byDocument[key].total += 1;
+        if (item.userId) byDocument[key].users.add(item.userId);
+      });
+
+      const rows = Object.entries(byDocument)
+        .map(([documentName, data]) => ({
+          documentName,
+          total: data.total,
+          unique: data.users.size
+        }))
+        .sort((a, b) => b.total - a.total);
+
+      summaryListEl.innerHTML = rows.map(row => {
+        return `
+          <div class="summary-card">
+            <strong>${row.documentName}</strong><br>
+            総アクセス数: ${row.total}<br>
+            ユニークユーザー数: ${row.unique}
+          </div>
+        `;
+      }).join("");
+    }
+
     document.getElementById("backBtn").addEventListener("click", () => {
       location.href = "../admin.html";
     });
 
-    searchTextEl.addEventListener("input", renderLogs);
+    searchTextEl.addEventListener("input", renderAll);
+    viewModeEl.addEventListener("change", renderAll);
+    limitCountEl.addEventListener("change", renderAll);
 
     initLiff();
   </script>
