@@ -70,25 +70,76 @@
       margin-bottom: 16px;
     }
 
-    .log-list, .summary-list {
+    .hidden {
+      display: none;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
       margin-top: 20px;
     }
 
-    .log-card, .summary-card {
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f4f4f4;
+    }
+
+    .summary-card {
       background: #f4f4f4;
       border-radius: 8px;
       padding: 12px;
       margin-bottom: 12px;
     }
 
+    .chart-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-top: 20px;
+      margin-bottom: 20px;
+      background: #f4f4f4;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .chart-legend {
+      width: 100%;
+      max-width: 320px;
+      font-size: 14px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .legend-color {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
     .meta {
       font-size: 13px;
       color: #555;
       margin-top: 6px;
-    }
-
-    .hidden {
-      display: none;
     }
 
     pre {
@@ -128,7 +179,7 @@
     </select>
 
     <label for="searchText">検索（氏名・回覧物名）</label>
-    <input type="text" id="searchText" placeholder="例: 山田 / 回覧板" />
+    <input type="text" id="searchText" placeholder="例: 山田 / 回覧板_20260401" />
 
     <button id="backBtn">戻る</button>
 
@@ -138,8 +189,25 @@
       <div><strong>表示件数:</strong> <span id="filteredCount">0</span></div>
     </div>
 
-    <div id="logList" class="log-list"></div>
-    <div id="summaryList" class="summary-list hidden"></div>
+    <div id="listArea">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>氏名</th>
+              <th>回覧物</th>
+              <th>閲覧日時</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="summaryArea" class="hidden">
+      <div id="chartContainer"></div>
+      <div id="summaryList"></div>
+    </div>
   </div>
 
   <h3>デバッグ</h3>
@@ -164,8 +232,9 @@
       appId: "1:369904902476:web:3660b07939c9fe2347afe9"
     };
 
+    // admin 用 LIFF ID を入れてください
     const LIFF_ID = "2009656225-wPkU5qyM";
-　
+
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
@@ -176,18 +245,25 @@
     const accessMessageEl = document.getElementById("accessMessage");
     const mainAreaEl = document.getElementById("mainArea");
     const outputEl = document.getElementById("output");
+
     const searchTextEl = document.getElementById("searchText");
-    const logListEl = document.getElementById("logList");
-    const summaryListEl = document.getElementById("summaryList");
+    const viewModeEl = document.getElementById("viewMode");
+    const limitCountEl = document.getElementById("limitCount");
+
     const totalCountEl = document.getElementById("totalCount");
     const uniqueUserCountEl = document.getElementById("uniqueUserCount");
     const filteredCountEl = document.getElementById("filteredCount");
-    const viewModeEl = document.getElementById("viewMode");
-    const limitCountEl = document.getElementById("limitCount");
+
+    const listAreaEl = document.getElementById("listArea");
+    const summaryAreaEl = document.getElementById("summaryArea");
+    const logTableBodyEl = document.getElementById("logTableBody");
+    const chartContainerEl = document.getElementById("chartContainer");
+    const summaryListEl = document.getElementById("summaryList");
 
     let currentUserId = "";
     let currentUserData = null;
     let allLogs = [];
+    let allUsers = [];
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -234,17 +310,17 @@
 
     async function checkAccess() {
       try {
-        const ref = doc(db, "users", currentUserId);
-        const snap = await getDoc(ref);
+        const refUser = doc(db, "users", currentUserId);
+        const snapUser = await getDoc(refUser);
 
-        if (!snap.exists()) {
+        if (!snapUser.exists()) {
           displayNameEl.textContent = "未登録";
           myRoleEl.textContent = "user";
           showAccessMessage("error", "登録情報が見つかりません。");
           return;
         }
 
-        currentUserData = snap.data();
+        currentUserData = snapUser.data();
         const myRole = currentUserData.role || "user";
         const fullName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
 
@@ -261,7 +337,7 @@
         mainAreaEl.style.display = "block";
         setStatus("アクセス許可");
 
-        await loadLogs();
+        await loadData();
       } catch (e) {
         setStatus("権限確認エラー");
         outputEl.textContent += `[ACCESS ERROR] ${e.message || e}\n`;
@@ -269,14 +345,17 @@
       }
     }
 
-    async function loadLogs() {
+    async function loadData() {
       try {
-        setStatus("閲覧履歴取得中");
+        setStatus("データ取得中");
 
-        const snap = await getDocs(collection(db, "viewLogs"));
+        const [logSnap, userSnap] = await Promise.all([
+          getDocs(collection(db, "viewLogs")),
+          getDocs(collection(db, "users"))
+        ]);
+
         allLogs = [];
-
-        snap.forEach(docSnap => {
+        logSnap.forEach(docSnap => {
           allLogs.push({
             docId: docSnap.id,
             ...docSnap.data()
@@ -289,11 +368,19 @@
           return bDate.localeCompare(aDate);
         });
 
+        allUsers = [];
+        userSnap.forEach(docSnap => {
+          allUsers.push({
+            docId: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+
         renderAll();
-        setStatus("閲覧履歴取得完了");
+        setStatus("データ取得完了");
       } catch (e) {
-        setStatus("閲覧履歴取得エラー");
-        outputEl.textContent += `[LOAD LOGS ERROR] ${e.message || e}\n`;
+        setStatus("データ取得エラー");
+        outputEl.textContent += `[LOAD DATA ERROR] ${e.message || e}\n`;
       }
     }
 
@@ -322,74 +409,154 @@
       filteredCountEl.textContent = filtered.length;
 
       if (viewModeEl.value === "list") {
-        logListEl.classList.remove("hidden");
-        summaryListEl.classList.add("hidden");
-        renderList(filtered);
+        listAreaEl.classList.remove("hidden");
+        summaryAreaEl.classList.add("hidden");
+        renderTable(filtered);
       } else {
-        logListEl.classList.add("hidden");
-        summaryListEl.classList.remove("hidden");
+        listAreaEl.classList.add("hidden");
+        summaryAreaEl.classList.remove("hidden");
         renderSummary(filtered);
       }
     }
 
-    function renderList(filtered) {
-      if (filtered.length === 0) {
-        logListEl.innerHTML = "<div class='log-card'>該当する閲覧履歴はありません。</div>";
+    function renderTable(logs) {
+      if (logs.length === 0) {
+        logTableBodyEl.innerHTML = "<tr><td colspan='3'>該当する閲覧履歴はありません。</td></tr>";
         return;
       }
 
-      logListEl.innerHTML = filtered.map(item => {
+      logTableBodyEl.innerHTML = logs.map(item => {
         const name = `${item.lastName || ""} ${item.firstName || ""}`.trim() || "氏名未設定";
         return `
-          <div class="log-card">
-            <strong>${name}</strong><br>
-            回覧物: ${item.documentName || "未設定"}<br>
-            <div class="meta">
-              閲覧日時: ${formatDate(item.viewedAt)}<br>
-              userId: ${item.userId || "未取得"}
-            </div>
-          </div>
+          <tr>
+            <td>${escapeHtml(name)}</td>
+            <td>${escapeHtml(item.documentName || "未設定")}</td>
+            <td>${escapeHtml(formatDate(item.viewedAt))}</td>
+          </tr>
         `;
       }).join("");
     }
 
-    function renderSummary(filtered) {
-      if (filtered.length === 0) {
+    function renderSummary(logs) {
+      chartContainerEl.innerHTML = "";
+      summaryListEl.innerHTML = "";
+
+      if (logs.length === 0) {
         summaryListEl.innerHTML = "<div class='summary-card'>集計対象の閲覧履歴はありません。</div>";
         return;
       }
 
-      const byDocument = {};
+      // 最新回覧板名を documentName の降順末尾で判定
+      const docNames = [...new Set(logs.map(item => item.documentName).filter(Boolean))].sort();
+      const latestDocumentName = docNames.length ? docNames[docNames.length - 1] : null;
 
-      filtered.forEach(item => {
-        const key = item.documentName || "未設定";
-        if (!byDocument[key]) {
-          byDocument[key] = {
-            total: 0,
-            users: new Set()
-          };
-        }
-        byDocument[key].total += 1;
-        if (item.userId) byDocument[key].users.add(item.userId);
-      });
+      if (!latestDocumentName) {
+        summaryListEl.innerHTML = "<div class='summary-card'>回覧板名が見つかりません。</div>";
+        return;
+      }
 
-      const rows = Object.entries(byDocument)
-        .map(([documentName, data]) => ({
-          documentName,
-          total: data.total,
-          unique: data.users.size
-        }))
-        .sort((a, b) => b.total - a.total);
+      const latestLogs = allLogs.filter(item => item.documentName === latestDocumentName);
+      const viewedUserIds = new Set(latestLogs.map(item => item.userId).filter(Boolean));
 
-      summaryListEl.innerHTML = rows.map(row => {
-        return `
-          <div class="summary-card">
-            <strong>${row.documentName}</strong><br>
-            総アクセス数: ${row.total}<br>
-            ユニークユーザー数: ${row.unique}
-          </div>
-        `;
-      }).join("");
+      const totalRegistered = allUsers.length;
+      const viewedCount = viewedUserIds.size;
+      const notViewedCount = Math.max(totalRegistered - viewedCount, 0);
+
+      renderPieChart(latestDocumentName, viewedCount, notViewedCount, totalRegistered);
+
+      summaryListEl.innerHTML = `
+        <div class="summary-card">
+          <strong>${escapeHtml(latestDocumentName)}</strong><br>
+          閲覧済: ${viewedCount} 人<br>
+          未閲覧: ${notViewedCount} 人<br>
+          登録者数: ${totalRegistered} 人
+        </div>
+      `;
+    }
+
+    function renderPieChart(documentName, viewedCount, notViewedCount, totalRegistered) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "chart-wrap";
+
+      const title = document.createElement("div");
+      title.innerHTML = `<strong>最新回覧板の閲覧状況</strong><br>${escapeHtml(documentName)}`;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = 220;
+      canvas.height = 220;
+
+      const chartText = document.createElement("div");
+      chartText.innerHTML = `<strong>閲覧済 ${viewedCount} / 登録者数 ${totalRegistered}</strong>`;
+
+      const legend = document.createElement("div");
+      legend.className = "chart-legend";
+      legend.innerHTML = `
+        <div class="legend-row">
+          <span class="legend-color" style="background:#06c755;"></span>
+          閲覧済: ${viewedCount} 人
+        </div>
+        <div class="legend-row">
+          <span class="legend-color" style="background:#cccccc;"></span>
+          未閲覧: ${notViewedCount} 人
+        </div>
+      `;
+
+      wrapper.appendChild(title);
+      wrapper.appendChild(canvas);
+      wrapper.appendChild(chartText);
+      wrapper.appendChild(legend);
+      chartContainerEl.appendChild(wrapper);
+
+      drawChart(canvas, viewedCount, notViewedCount);
+    }
+
+    function drawChart(canvas, viewed, notViewed) {
+      const ctx = canvas.getContext("2d");
+      const total = viewed + notViewed;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (total === 0) {
+        ctx.beginPath();
+        ctx.arc(110, 110, 80, 0, Math.PI * 2);
+        ctx.fillStyle = "#cccccc";
+        ctx.fill();
+        return;
+      }
+
+      const startAngle = -Math.PI / 2;
+      const viewedAngle = (viewed / total) * Math.PI * 2;
+
+      // 閲覧済
+      ctx.beginPath();
+      ctx.moveTo(110, 110);
+      ctx.arc(110, 110, 80, startAngle, startAngle + viewedAngle);
+      ctx.closePath();
+      ctx.fillStyle = "#06c755";
+      ctx.fill();
+
+      // 未閲覧
+      ctx.beginPath();
+      ctx.moveTo(110, 110);
+      ctx.arc(110, 110, 80, startAngle + viewedAngle, startAngle + Math.PI * 2);
+      ctx.closePath();
+      ctx.fillStyle = "#cccccc";
+      ctx.fill();
+
+      // 中央穴
+      ctx.beginPath();
+      ctx.arc(110, 110, 45, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
     document.getElementById("backBtn").addEventListener("click", () => {
