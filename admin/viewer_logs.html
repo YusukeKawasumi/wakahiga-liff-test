@@ -136,12 +136,6 @@
       flex-shrink: 0;
     }
 
-    .meta {
-      font-size: 13px;
-      color: #555;
-      margin-top: 6px;
-    }
-
     pre {
       background: #f4f4f4;
       padding: 12px;
@@ -180,6 +174,13 @@
 
     <label for="searchText">検索（氏名・回覧物名）</label>
     <input type="text" id="searchText" placeholder="例: 山田 / 回覧板_20260401" />
+
+    <div id="documentSelectWrap" class="hidden">
+      <label for="documentSelect">集計対象の回覧物</label>
+      <select id="documentSelect">
+        <option value="">回覧物を選択してください</option>
+      </select>
+    </div>
 
     <button id="backBtn">戻る</button>
 
@@ -232,7 +233,6 @@
       appId: "1:369904902476:web:3660b07939c9fe2347afe9"
     };
 
-    // admin 用 LIFF ID を入れてください
     const LIFF_ID = "2009656225-wPkU5qyM";
 
     const app = initializeApp(firebaseConfig);
@@ -249,6 +249,8 @@
     const searchTextEl = document.getElementById("searchText");
     const viewModeEl = document.getElementById("viewMode");
     const limitCountEl = document.getElementById("limitCount");
+    const documentSelectWrapEl = document.getElementById("documentSelectWrap");
+    const documentSelectEl = document.getElementById("documentSelect");
 
     const totalCountEl = document.getElementById("totalCount");
     const uniqueUserCountEl = document.getElementById("uniqueUserCount");
@@ -282,6 +284,15 @@
       } catch {
         return isoString;
       }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
     async function initLiff() {
@@ -376,11 +387,29 @@
           });
         });
 
+        populateDocumentSelect();
         renderAll();
         setStatus("データ取得完了");
       } catch (e) {
         setStatus("データ取得エラー");
         outputEl.textContent += `[LOAD DATA ERROR] ${e.message || e}\n`;
+      }
+    }
+
+    function populateDocumentSelect() {
+      const docNames = [...new Set(allLogs.map(item => item.documentName).filter(Boolean))].sort().reverse();
+
+      documentSelectEl.innerHTML = `<option value="">回覧物を選択してください</option>`;
+
+      docNames.forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        documentSelectEl.appendChild(option);
+      });
+
+      if (docNames.length > 0 && !documentSelectEl.value) {
+        documentSelectEl.value = docNames[0];
       }
     }
 
@@ -409,13 +438,15 @@
       filteredCountEl.textContent = filtered.length;
 
       if (viewModeEl.value === "list") {
+        documentSelectWrapEl.classList.add("hidden");
         listAreaEl.classList.remove("hidden");
         summaryAreaEl.classList.add("hidden");
         renderTable(filtered);
       } else {
+        documentSelectWrapEl.classList.remove("hidden");
         listAreaEl.classList.add("hidden");
         summaryAreaEl.classList.remove("hidden");
-        renderSummary(filtered);
+        renderSummary();
       }
     }
 
@@ -437,36 +468,29 @@
       }).join("");
     }
 
-    function renderSummary(logs) {
+    function renderSummary() {
       chartContainerEl.innerHTML = "";
       summaryListEl.innerHTML = "";
 
-      if (logs.length === 0) {
-        summaryListEl.innerHTML = "<div class='summary-card'>集計対象の閲覧履歴はありません。</div>";
+      const selectedDocumentName = documentSelectEl.value;
+
+      if (!selectedDocumentName) {
+        summaryListEl.innerHTML = "<div class='summary-card'>回覧物を選択してください。</div>";
         return;
       }
 
-      // 最新回覧板名を documentName の降順末尾で判定
-      const docNames = [...new Set(logs.map(item => item.documentName).filter(Boolean))].sort();
-      const latestDocumentName = docNames.length ? docNames[docNames.length - 1] : null;
-
-      if (!latestDocumentName) {
-        summaryListEl.innerHTML = "<div class='summary-card'>回覧板名が見つかりません。</div>";
-        return;
-      }
-
-      const latestLogs = allLogs.filter(item => item.documentName === latestDocumentName);
-      const viewedUserIds = new Set(latestLogs.map(item => item.userId).filter(Boolean));
+      const targetLogs = allLogs.filter(item => item.documentName === selectedDocumentName);
+      const viewedUserIds = new Set(targetLogs.map(item => item.userId).filter(Boolean));
 
       const totalRegistered = allUsers.length;
       const viewedCount = viewedUserIds.size;
       const notViewedCount = Math.max(totalRegistered - viewedCount, 0);
 
-      renderPieChart(latestDocumentName, viewedCount, notViewedCount, totalRegistered);
+      renderPieChart(selectedDocumentName, viewedCount, notViewedCount, totalRegistered);
 
       summaryListEl.innerHTML = `
         <div class="summary-card">
-          <strong>${escapeHtml(latestDocumentName)}</strong><br>
+          <strong>${escapeHtml(selectedDocumentName)}</strong><br>
           閲覧済: ${viewedCount} 人<br>
           未閲覧: ${notViewedCount} 人<br>
           登録者数: ${totalRegistered} 人
@@ -479,7 +503,7 @@
       wrapper.className = "chart-wrap";
 
       const title = document.createElement("div");
-      title.innerHTML = `<strong>最新回覧板の閲覧状況</strong><br>${escapeHtml(documentName)}`;
+      title.innerHTML = `<strong>回覧板の閲覧状況</strong><br>${escapeHtml(documentName)}`;
 
       const canvas = document.createElement("canvas");
       canvas.width = 220;
@@ -527,7 +551,6 @@
       const startAngle = -Math.PI / 2;
       const viewedAngle = (viewed / total) * Math.PI * 2;
 
-      // 閲覧済
       ctx.beginPath();
       ctx.moveTo(110, 110);
       ctx.arc(110, 110, 80, startAngle, startAngle + viewedAngle);
@@ -535,7 +558,6 @@
       ctx.fillStyle = "#06c755";
       ctx.fill();
 
-      // 未閲覧
       ctx.beginPath();
       ctx.moveTo(110, 110);
       ctx.arc(110, 110, 80, startAngle + viewedAngle, startAngle + Math.PI * 2);
@@ -543,20 +565,10 @@
       ctx.fillStyle = "#cccccc";
       ctx.fill();
 
-      // 中央穴
       ctx.beginPath();
       ctx.arc(110, 110, 45, 0, Math.PI * 2);
       ctx.fillStyle = "#ffffff";
       ctx.fill();
-    }
-
-    function escapeHtml(str) {
-      return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
     }
 
     document.getElementById("backBtn").addEventListener("click", () => {
@@ -566,6 +578,7 @@
     searchTextEl.addEventListener("input", renderAll);
     viewModeEl.addEventListener("change", renderAll);
     limitCountEl.addEventListener("change", renderAll);
+    documentSelectEl.addEventListener("change", renderAll);
 
     initLiff();
   </script>
