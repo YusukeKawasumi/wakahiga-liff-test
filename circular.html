@@ -52,14 +52,12 @@ import {
   doc,
   getDoc,
   addDoc,
-  collection
+  collection,
+  getDocs,
+  query,
+  where,
+  limit
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
-
-import {
-  getStorage,
-  ref,
-  getDownloadURL
-} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCmzAsVHLQAGQbHO9hZwQE49PJZOTUJgk4",
@@ -74,7 +72,6 @@ const LIFF_ID = "2009623625-55OO77NK";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const storage = getStorage(app);
 
 let currentUserId = "";
 let userData = null;
@@ -119,30 +116,42 @@ async function checkUser() {
 
   userData = snap.data();
 
-  await loadPDF();
+  await loadCurrentCircular();
 }
 
-async function loadPDF() {
+async function loadCurrentCircular() {
   try {
-    const storageRef = ref(storage, "circular/current.pdf");
-    const url = await getDownloadURL(storageRef);
+    const q = query(
+      collection(db, "circulars"),
+      where("isCurrent", "==", true),
+      limit(1)
+    );
 
-    // 閲覧ログを保存
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      showError("回覧板がまだアップロードされていません");
+      return;
+    }
+
+    const currentCircular = snap.docs[0].data();
+    const downloadUrl = currentCircular.downloadUrl;
+    const documentName = currentCircular.documentName || "回覧板";
+
     await addDoc(collection(db, "viewLogs"), {
       userId: currentUserId,
       lastName: userData.lastName || "",
       firstName: userData.firstName || "",
-      documentName: "回覧板",
+      documentName: documentName,
       viewedAt: new Date().toISOString()
     });
 
-    // PDF表示
     document.body.innerHTML = `
-      <iframe src="${url}"></iframe>
+      <iframe src="${downloadUrl}"></iframe>
     `;
   } catch (e) {
     console.error(e);
-    showError("回覧板がまだアップロードされていません");
+    showError("回覧板の読み込みに失敗しました");
   }
 }
 
