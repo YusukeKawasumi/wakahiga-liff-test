@@ -62,6 +62,30 @@
       color: white;
     }
 
+    .action-btn {
+      width: auto;
+      display: inline-block;
+      margin-right: 8px;
+      margin-top: 8px;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+
+    .btn-progress {
+      background: #f9ab00;
+      color: white;
+    }
+
+    .btn-done {
+      background: #188038;
+      color: white;
+    }
+
+    .btn-new {
+      background: #d93025;
+      color: white;
+    }
+
     .inquiry-list {
       margin-top: 20px;
     }
@@ -81,6 +105,11 @@
 
     .status-new {
       color: #d93025;
+      font-weight: bold;
+    }
+
+    .status-in-progress {
+      color: #f9ab00;
       font-weight: bold;
     }
 
@@ -117,8 +146,9 @@
     <label for="statusFilter">status絞り込み</label>
     <select id="statusFilter">
       <option value="all">すべて</option>
-      <option value="new">new</option>
-      <option value="done">done</option>
+      <option value="new">未対応</option>
+      <option value="in_progress">対応中</option>
+      <option value="done">対応済み</option>
     </select>
 
     <button id="backBtn">戻る</button>
@@ -140,7 +170,8 @@
       doc,
       getDoc,
       getDocs,
-      collection
+      collection,
+      updateDoc
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -193,7 +224,15 @@
     }
 
     function getStatusClass(status) {
-      return status === "done" ? "status-done" : "status-new";
+      if (status === "done") return "status-done";
+      if (status === "in_progress") return "status-in-progress";
+      return "status-new";
+    }
+
+    function getStatusLabel(status) {
+      if (status === "done") return "対応済み";
+      if (status === "in_progress") return "対応中";
+      return "未対応";
     }
 
     async function initLiff() {
@@ -291,8 +330,9 @@
 
       const filtered = allInquiries.filter(item => {
         const target = `${item.lastName || ""} ${item.firstName || ""} ${item.categoryLabel || ""} ${item.message || ""}`.toLowerCase();
+        const itemStatus = item.status || "new";
         const searchOk = !search || target.includes(search);
-        const statusOk = statusFilter === "all" || (item.status || "new") === statusFilter;
+        const statusOk = statusFilter === "all" || itemStatus === statusFilter;
         return searchOk && statusOk;
       });
 
@@ -313,12 +353,52 @@
             内容: ${item.message || "未入力"}<br>
             <div class="meta">
               日時: ${formatDate(item.createdAt)}<br>
-              status: <span class="${getStatusClass(status)}">${status}</span>
+              status: <span class="${getStatusClass(status)}">${getStatusLabel(status)}</span><br>
+              更新日時: ${formatDate(item.updatedAt || item.createdAt)}<br>
+              更新者: ${item.updatedByName || "未設定"}
+            </div>
+
+            <div>
+              <button class="action-btn btn-new" onclick="window.updateInquiryStatus('${item.docId}', 'new')">未対応にする</button>
+              <button class="action-btn btn-progress" onclick="window.updateInquiryStatus('${item.docId}', 'in_progress')">対応中にする</button>
+              <button class="action-btn btn-done" onclick="window.updateInquiryStatus('${item.docId}', 'done')">対応済みにする</button>
             </div>
           </div>
         `;
       }).join("");
     }
+
+    window.updateInquiryStatus = async function(docId, nextStatus) {
+      try {
+        const target = allInquiries.find(item => item.docId === docId);
+        if (!target) {
+          alert("対象データが見つかりません");
+          return;
+        }
+
+        const beforeStatus = target.status || "new";
+        const afterLabel = getStatusLabel(nextStatus);
+
+        const ok = confirm(`問い合わせの状態を「${afterLabel}」に変更しますか？`);
+        if (!ok) return;
+
+        const updaterName = `${currentUserData.lastName || ""} ${currentUserData.firstName || ""}`.trim();
+
+        await updateDoc(doc(db, "inquiries", docId), {
+          status: nextStatus,
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUserId,
+          updatedByName: updaterName
+        });
+
+        outputEl.textContent += `[STATUS UPDATE] ${docId}: ${beforeStatus} -> ${nextStatus}\n`;
+
+        await loadInquiries();
+      } catch (e) {
+        outputEl.textContent += `[UPDATE INQUIRY STATUS ERROR] ${e.message || e}\n`;
+        alert("status更新に失敗しました");
+      }
+    };
 
     document.getElementById("backBtn").addEventListener("click", () => {
       location.href = "../admin.html";
